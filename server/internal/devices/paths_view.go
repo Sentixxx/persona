@@ -104,12 +104,9 @@ func (m *Machine) pingAnswered(peer *rpc.Peer, err error) {
 		}
 	}
 	if missed {
-		activity := peer.LastRead()
-		if relayedMiss {
-			// The relay's own timeout response proves only that the relay answered. Look at earlier non-ping traffic;
-			// otherwise every relayed deadline would keep the next one alive forever.
-			activity = re.PingActivity()
-		}
+		// rpc.Peer excludes a deadline error response itself, including one that arrives late, so this cannot be kept
+		// alive by a relay answering its own timeout.
+		activity := peer.PingActivity()
 		if !activity.IsZero() && time.Since(activity) <= pingActivityWindow {
 			missed = false
 		} else if mostlyDelayed {

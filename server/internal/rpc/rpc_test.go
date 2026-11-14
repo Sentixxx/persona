@@ -232,17 +232,85 @@ func TestServeReturnsOnEOF(t *testing.T) {
 	}
 }
 
-func TestLastReadTracksAnUnfinishedFrame(t *testing.T) {
+func TestPingActivityTracksAnUnfinishedFrame(t *testing.T) {
 	const partial = `{"event":"file.chunk","params":"still being written`
 	p := New("h", io.Discard)
-	if got := p.LastRead(); !got.IsZero() {
-		t.Fatalf("LastRead before Serve = %v, want zero", got)
+	if got := p.PingActivity(); !got.IsZero() {
+		t.Fatalf("PingActivity before Serve = %v, want zero", got)
 	}
 	if err := p.Serve(context.Background(), strings.NewReader(partial)); !errors.Is(err, io.EOF) {
 		t.Fatalf("Serve = %v, want EOF", err)
 	}
-	if got := p.LastRead(); got.IsZero() {
-		t.Fatal("LastRead stayed zero although a partial frame was read")
+	if got := p.PingActivity(); got.IsZero() {
+		t.Fatal("PingActivity stayed zero although a partial frame was read")
+	}
+}
+
+// Even an error response whose caller has already gone away is not new evidence of a working node. Other traffic
+// before it remains activity; another late deadline does not move that timestamp forward.
+func TestPingActivityIgnoresLateDeadlineResponses(t *testing.T) {
+	r, w := io.Pipe()
+	p := New("h", io.Discard)
+	events := make(chan string, 1)
+	p.OnEvent = func(event string, _ json.RawMessage) { events <- event }
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- p.Serve(context.Background(), r) }()
+	t.Cleanup(func() {
+		_ = w.Close()
+		_ = r.Close()
+		p.Close(io.EOF)
+		select {
+		case <-serveDone:
+		case <-time.After(time.Second):
+			t.Error("Serve did not stop")
+		}
+	})
+	write := func(line string) {
+		t.Helper()
+		done := make(chan error, 1)
+		go func() {
+			_, err := io.WriteString(w, line+"\n")
+			done <- err
+		}()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("write: %v", err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("write did not reach Serve")
+		}
+	}
+	waitDeadline := func(previous uint64) {
+		t.Helper()
+		deadline := time.Now().Add(time.Second)
+		for p.deadlineRead.Load() <= previous {
+			if time.Now().After(deadline) {
+				t.Fatal("deadline response was not processed")
+			}
+			<-time.After(time.Millisecond)
+		}
+	}
+	write(`{"id":"h1","error":{"message":"context deadline exceeded"}}`)
+	waitDeadline(0)
+	if got := p.PingActivity(); !got.IsZero() {
+		t.Fatalf("late deadline created activity %v", got)
+	}
+	write(`{"event":"work"}`)
+	select {
+	case <-events:
+	case <-time.After(time.Second):
+		t.Fatal("event was not processed")
+	}
+	active := p.PingActivity()
+	if active.IsZero() {
+		t.Fatal("ordinary event did not count as activity")
+	}
+	previous := p.deadlineRead.Load()
+	write(`{"id":"h2","error":{"message":"context deadline exceeded"}}`)
+	waitDeadline(previous)
+	if got := p.PingActivity(); !got.Equal(active) {
+		t.Fatalf("another late deadline moved activity from %v to %v", active, got)
 	}
 }
 

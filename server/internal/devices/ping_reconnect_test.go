@@ -325,7 +325,7 @@ func (w *signalWriter) wantPing(t *testing.T) {
 // writePingActivity puts another partial-frame chunk on the wire and waits until the raw reader observed it.
 func writePingActivity(t *testing.T, w io.Writer, peer *rpc.Peer, chunk string) {
 	t.Helper()
-	before := peer.LastRead()
+	before := peer.PingActivity()
 	writeDone := make(chan error, 1)
 	go func() {
 		_, err := io.WriteString(w, chunk)
@@ -340,7 +340,7 @@ func writePingActivity(t *testing.T, w io.Writer, peer *rpc.Peer, chunk string) 
 		t.Fatal("activity write did not reach the reader")
 	}
 	deadline := time.Now().Add(time.Second)
-	for !peer.LastRead().After(before) {
+	for !peer.PingActivity().After(before) {
 		if time.Now().After(deadline) {
 			t.Fatal("reader did not record the activity")
 		}

@@ -42,24 +42,12 @@ type Error struct {
 	// failure (a refused send) rather than show the message.
 	Code string          `json:"code,omitempty"`
 	Data json.RawMessage `json:"data,omitempty"`
-	// pingActivity is the last non-ping message before this response. It lets a ping watchdog ignore the response
-	// itself when deciding whether other traffic kept the connection active.
-	pingActivity time.Time
 }
 
 func (e *Error) Error() string { return e.Message }
 
 // WireError is its code and data, for the extension SDK (sdk/go/ext) to send as they are.
 func (e *Error) WireError() (string, json.RawMessage) { return e.Code, e.Data }
-
-// PingActivity is when the last non-ping message arrived before this error response. It is zero when there was none,
-// or when this error did not come from a ping. A relayed ping timeout is not itself evidence that the node is active.
-func (e *Error) PingActivity() time.Time {
-	if e == nil {
-		return time.Time{}
-	}
-	return e.pingActivity
-}
 
 var ErrClosed = errors.New("rpc: connection closed")
 
@@ -122,7 +110,10 @@ type Peer struct {
 	// a stalled relay WebSocket), and whoever waits behind it must still return on its ctx or on Close.
 	wsem         chan struct{}
 	nextID       atomic.Int64
+	readSeq      atomic.Uint64
 	lastRead     atomic.Int64 // unix nanoseconds; any positive raw read, including part of a JSON line
+	lastActivity atomic.Int64 // last input that was not a deadline error response
+	deadlineRead atomic.Uint64
 	writeWaiters atomic.Int64
 	mu           sync.Mutex
 	pending      map[string]chan message
@@ -174,9 +165,21 @@ func New(prefix string, w io.Writer) *Peer {
 	return &Peer{prefix: prefix, w: w, pending: map[string]chan message{}, methods: map[string]string{}, running: map[string]context.CancelFunc{}, closed: make(chan struct{}), wsem: make(chan struct{}, 1)}
 }
 
-// LastRead is when Serve last received bytes, even if they were only part of an unfinished JSON line. Unlike a
-// successful local write, this is evidence that the other end sent something. The zero time means nothing was read.
-func (p *Peer) LastRead() time.Time {
+// PingActivity is when this connection last showed activity that can make a ping timeout ambiguous: any recent raw
+// input, except that a deadline error response does not prove anything beyond the relay having answered. Partial JSON
+// lines count. A deadline response and later bytes in the same raw read conservatively count only earlier activity.
+func (p *Peer) PingActivity() time.Time {
+	if seq := p.readSeq.Load(); seq != 0 && seq == p.deadlineRead.Load() {
+		ns := p.lastActivity.Load()
+		if ns == 0 {
+			return time.Time{}
+		}
+		return time.Unix(0, ns)
+	}
+	return p.lastReadTime()
+}
+
+func (p *Peer) lastReadTime() time.Time {
 	ns := p.lastRead.Load()
 	if ns == 0 {
 		return time.Time{}
@@ -195,6 +198,7 @@ type readActivity struct {
 func (r readActivity) Read(b []byte) (int, error) {
 	n, err := r.r.Read(b)
 	if n > 0 {
+		r.peer.readSeq.Add(1)
 		r.peer.lastRead.Store(time.Now().UnixNano())
 	}
 	return n, err
@@ -220,15 +224,13 @@ func (p *Peer) Serve(ctx context.Context, r io.Reader) error {
 		maximum = p.Limits.FrameBytes
 	}
 	sc := newLineReader(readActivity{peer: p, r: r}, maximum) // raw reads count partial lines as activity too
-	var lastActivity time.Time
 	for sc.Scan() {
-		readAt := p.LastRead()
+		readAt := p.lastReadTime()
 		var m message
 		if err := json.Unmarshal(sc.Bytes(), &m); err != nil {
-			lastActivity = readAt
+			p.lastActivity.Store(readAt.UnixNano())
 			continue
 		}
-		pingResponse := false
 		switch {
 		case m.Method != "":
 			// Registered before the handler starts: a cancel right behind the request finds it.
@@ -261,10 +263,6 @@ func (p *Peer) Serve(ctx context.Context, r io.Reader) error {
 			}
 		case m.ID != "":
 			p.mu.Lock()
-			pingResponse = p.methods[m.ID] == "ping"
-			if pingResponse && m.Error != nil {
-				m.Error.pingActivity = lastActivity
-			}
 			ch := p.pending[m.ID]
 			if ch != nil {
 				ch <- m // publish the reply before WaitPending can observe its completion
@@ -274,10 +272,11 @@ func (p *Peer) Serve(ctx context.Context, r io.Reader) error {
 			p.mu.Unlock()
 		}
 		deadlineResponse := m.ID != "" && m.Error != nil && m.Error.Code == "" && m.Error.Message == context.DeadlineExceeded.Error()
-		if !pingResponse && !deadlineResponse {
-			// A late ping may already have forgotten its method. Never let any deadline response become the
-			// "other traffic" that keeps a later ping timeout alive.
-			lastActivity = readAt
+		if deadlineResponse {
+			// A late or relayed ping timeout is not itself the traffic that proves a node is still working.
+			p.deadlineRead.Store(p.readSeq.Load())
+		} else {
+			p.lastActivity.Store(readAt.UnixNano())
 		}
 	}
 	err := sc.Err()
