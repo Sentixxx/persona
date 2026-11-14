@@ -20,6 +20,15 @@ const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 const DURATION = /^[0-9]+(?:\.[0-9]+)?[smhd]?$/;
 // Extra options are safe only when they cannot narrow the claimed test or package selection. Everything else is left unmatched.
 const SAFE_EXTRA = /^(?:-v+|-q|-race|-cover|-coverprofile=\S+|-count=\d+|-timeout=\S+|-parallel=\d+|-shuffle=\S+|-json|--verbose|--quiet|--watch(?:=\S+)?|--runInBand|--maxWorkers=\d+|--max-workers=\d+|--workers=\d+|--coverage|--ci|--color|--no-color|--silent|--bail(?:=\d+)?|-x|--fail-fast|--no-fail-fast|--show-output|--nocapture|-s)$/;
+const SAFE_CI = /^CI=(?:0|1|true|false)$/i;
+const CONDITIONAL = new Set(["if", "then", "elif", "else", "fi", "case", "for", "while", "until", "select", "do", "done"]);
+
+function harmlessAssignment(word: string): boolean {
+  if (SAFE_CI.test(word)) return true;
+  if (!word.startsWith("GOFLAGS=")) return false;
+  const flags = word.slice("GOFLAGS=".length).trim();
+  return Boolean(flags) && flags.split(/\s+/).every((flag) => SAFE_EXTRA.test(flag));
+}
 
 export type CloseoutCommandState = "exit" | "error" | "background" | "running" | "not_found" | "unavailable";
 
@@ -75,7 +84,7 @@ function bareCommands(text: string): string[] {
 }
 
 function recognizable(text: string): boolean {
-  return commandSegments(text).some((words) => {
+  return commandSegments(text).some(({ words }) => {
     const command = words.join(" ");
     return HEAD.test(`${command} `) && !PROSE_MAKE.test(command) && (!/^go(?:\s|$)/.test(command) || GO.test(command));
   });
@@ -100,16 +109,34 @@ export function closeoutCommandClaims(verified: string): string[] {
   return claims;
 }
 
-/** The simple commands of a shell line, without leading assignments and common wrappers. cd is context, not a claim. */
-function commandSegments(command: string, depth = 2): string[][] {
-  const out: string[][] = [];
+interface CommandPart {
+  words: string[];
+  /** The static directory in effect for this command; an unscoped claim does not constrain it. */
+  directory?: string;
+}
+
+/** The simple commands of a shell line, retaining directory context and discarding only proven harmless wrappers. */
+function commandSegments(command: string, depth = 2, inherited?: string): CommandPart[] {
+  const out: CommandPart[] = [];
+  let directory = inherited;
   for (const raw of shellSegments(command)) {
     const words = commandWords(raw);
+    if (!words.length || CONDITIONAL.has(base(words[0]))) return [];
     const script = shellScript(words);
-    if (script !== undefined && depth > 0) out.push(...commandSegments(script, depth - 1));
-    else if (words.length) out.push(withoutRedirections(words));
+    if (script !== undefined && depth > 0) {
+      out.push(...commandSegments(script, depth - 1, directory));
+      continue;
+    }
+    if (["cd", "pushd"].includes(base(words[0]))) {
+      const target = withoutRedirections(words);
+      if (target.length !== 2) return [];
+      directory = target[1];
+      continue;
+    }
+    const simple = withoutRedirections(words);
+    if (simple.length) out.push({ words: simple, directory });
   }
-  return out.filter((words) => words.length > 0);
+  return out;
 }
 
 function shellScript(words: string[]): string | undefined {
@@ -121,9 +148,20 @@ function commandWords(input: string[]): string[] {
   let words = input;
   for (let guard = 0; words.length > 0 && guard < 20; guard++) {
     const first = base(words[0]);
-    if (first === "cd" || first === "pushd") return [];
-    if (ASSIGNMENT.test(words[0])) { words = words.slice(1); continue; }
-    if (first === "env") { words = skipFlags(words.slice(1), "-u", "--unset", "-C", "--chdir"); continue; }
+    if (ASSIGNMENT.test(words[0])) {
+      if (!harmlessAssignment(words[0])) return [];
+      words = words.slice(1);
+      continue;
+    }
+    if (first === "env") {
+      const rest = words.slice(1);
+      for (const word of rest) {
+        if (!word.startsWith("-")) break;
+        if (word.startsWith("-C") || word === "--chdir" || word.startsWith("--chdir=")) return [];
+      }
+      words = skipFlags(rest, "-u", "--unset", "-C", "--chdir");
+      continue;
+    }
     if (first === "command") { words = skipFlags(words.slice(1)); continue; }
     if (first === "time" || first === "nohup") { words = skipFlags(words.slice(1)); continue; }
     if (first === "nice") { words = skipFlags(words.slice(1), "-n", "--adjustment"); continue; }
@@ -168,6 +206,7 @@ function shellSegments(command: string): string[][] {
   let word = "";
   let inWord = false;
   let subst = 0;
+  let conditional = false;
   let pending: Heredoc[] = [];
   const flush = () => {
     if (!inWord) return;
@@ -209,7 +248,8 @@ function shellSegments(command: string): string[][] {
       flush();
     } else if (c === ";" || c === "|") {
       end();
-      if (c === "|" && i + 1 < command.length && (command[i + 1] === "|" || command[i + 1] === "&")) i++;
+      if (c === "|" && i + 1 < command.length && command[i + 1] === "|") { conditional = true; i++; }
+      else if (c === "|" && i + 1 < command.length && command[i + 1] === "&") i++;
     } else if (c === "&") {
       if (i + 1 < command.length && command[i + 1] === "&") { end(); i++; }
       else if ((i + 1 < command.length && command[i + 1] === ">") || word.endsWith(">") || word.endsWith("<")) add("&");
@@ -228,7 +268,7 @@ function shellSegments(command: string): string[][] {
     } else add(c);
   }
   end();
-  return segments;
+  return conditional ? [] : segments;
 }
 
 function readDoubleQuoted(text: string, start: number, add: (text: string) => void): number {
@@ -275,12 +315,16 @@ function sameWords(want: string[], got: string[]): boolean {
   return extra.every((word) => SAFE_EXTRA.test(word));
 }
 
-/** Claimed simple commands must begin recorded simple commands in the same order, without narrowing their selection. */
-function segmentsMatch(claim: string[][], run: string[][]): boolean {
+function samePart(want: CommandPart, got: CommandPart): boolean {
+  return (want.directory === undefined || want.directory === got.directory) && sameWords(want.words, got.words);
+}
+
+/** Claimed commands run in order; a directory named by the claim must be the directory in effect for the recorded command. */
+function segmentsMatch(claim: CommandPart[], run: CommandPart[]): boolean {
   if (!claim.length) return false;
   let at = 0;
   for (const want of claim) {
-    while (at < run.length && !sameWords(want, run[at])) at++;
+    while (at < run.length && !samePart(want, run[at])) at++;
     if (at === run.length) return false;
     at++;
   }
