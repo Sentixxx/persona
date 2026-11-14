@@ -18,7 +18,7 @@ vi.mock("./store", () => {
 vi.mock("./router", () => ({ navigate: vi.fn() }));
 vi.mock("../ui/atoms", async (actual) => ({ ...(await actual<typeof import("../ui/atoms")>()), toast: vi.fn() }));
 
-import { acceptOutgoing, arrived, checkOutbox, forgetOutgoing, askPersona, discardOutbox, inSendOrder, keepFailed, keepOutgoing, noteSent, noteWritten, outboxMessage, placeFailed, queueToSession, resetOutboxClaimsForTests, resetRestoredForTests, restoreOutbox, retryOutbox, sendToSession, settle, settleOutbox, SENT_GRACE_MS, type OutboxEntry } from "./outbox";
+import { acceptOutgoing, arrived, checkOutbox, forgetOutgoing, askPersona, discardOutbox, inSendOrder, keepFailed, keepOutgoing, noteSent, noteWritten, outboxMessage, placeFailed, queueToSession, registerOutboxRecheck, resetOutboxClaimsForTests, resetRestoredForTests, restoreOutbox, retryOutbox, sendToSession, settle, settleOutbox, SENT_GRACE_MS, type OutboxEntry } from "./outbox";
 import { messageFeedback, resetMessageFeedback } from "./message-send";
 import type { ChatLine } from "./turns";
 import { ApiError } from "./api";
@@ -33,6 +33,12 @@ function response(body: unknown, status = 200) {
 }
 const outbox = () => getState().outbox as Record<string, OutboxEntry[]>;
 const entry = (patch: Partial<OutboxEntry> = {}): OutboxEntry => ({ id: "e1", text: "你好", images: [], at: 1000, state: "sent", ...patch });
+const recheckRegistrations: (() => void)[] = [];
+const mountedRecheck = (mid: string, sid: string, recheck: () => void) => {
+  const cleanup = registerOutboxRecheck(mid, sid, recheck);
+  recheckRegistrations.push(cleanup);
+  return cleanup;
+};
 const retryPrompts = [
   { kind: "plain text", text: "Please check this." },
   { kind: "selected skill", text: skillDraft([skillContext({ id: "scoped-reference", name: "review", source: "Project" })], "Please check this.") },
@@ -44,7 +50,11 @@ beforeEach(() => {
   (getState() as { assistant: unknown }).assistant = null;
   vi.clearAllMocks();
 });
-afterEach(() => { resetMessageFeedback(); vi.unstubAllGlobals(); });
+afterEach(() => {
+  for (const cleanup of recheckRegistrations.splice(0)) cleanup();
+  resetMessageFeedback();
+  vi.unstubAllGlobals();
+});
 
 describe("which bubbles stay", () => {
   it("goes once the transcript says the same, with as many images", () => {
@@ -198,7 +208,8 @@ describe("sending from another page", () => {
     const fetcher = vi.fn().mockResolvedValue(response({ id, kind: "message", target: { path: "/api/v1/sessions/m/s/messages" }, state: "done" }));
     vi.stubGlobal("fetch", fetcher);
     const recheck = vi.fn();
-    expect(await checkOutbox("m", "s", id, recheck)).toBe("applied");
+    mountedRecheck("m", "s", recheck);
+    expect(await checkOutbox("m", "s", id)).toBe("applied");
     expect(recheck).toHaveBeenCalledOnce();
     expect(outbox()["m/s"][0]).toMatchObject({ id, state: "sent", inDoubt: undefined });
     expect(fetcher).toHaveBeenCalledOnce();
@@ -229,7 +240,8 @@ describe("checking an uncertain send", () => {
     else fetcher.mockResolvedValue(status === 404 ? response({ error: "missing" }, status) : receipt(state));
     vi.stubGlobal("fetch", fetcher);
     const recheck = vi.fn();
-    expect(await checkOutbox("m", "s", id, recheck)).toBe("unknown");
+    mountedRecheck("m", "s", recheck);
+    expect(await checkOutbox("m", "s", id)).toBe("unknown");
     expect(outbox()["m/s"][0]).toMatchObject({ id, state: "failed", inDoubt: true, newId: false });
     expect(recheck).toHaveBeenCalledOnce();
     expect(fetcher).toHaveBeenCalledOnce();
@@ -298,20 +310,52 @@ describe("checking an uncertain send", () => {
     expect(JSON.parse(fetcher.mock.calls[1][1].body).client_msg_id).not.toBe(id);
   });
 
-  it("a remounted Check uses the latest recheck callback for its one in-flight read", async () => {
+  it("a replacement view receives an in-flight Check without a second click", async () => {
     failed();
     let answer!: (value: unknown) => void;
     const fetcher = vi.fn().mockReturnValue(new Promise((resolve) => { answer = resolve; }));
     vi.stubGlobal("fetch", fetcher);
     const unmounted = vi.fn(), remounted = vi.fn();
-    const checking = checkOutbox("m", "s", id, unmounted);
-    expect(checkOutbox("m", "s", id, remounted)).toBe(checking);
+    const leave = mountedRecheck("m", "s", unmounted);
+    const checking = checkOutbox("m", "s", id);
+    mountedRecheck("m", "s", remounted);
+    leave(); // an old view's cleanup cannot remove the replacement's registration
     answer(receipt("pending"));
     expect(await checking).toBe("unknown");
     expect(unmounted).not.toHaveBeenCalled();
     expect(remounted).toHaveBeenCalledOnce();
     expect(fetcher).toHaveBeenCalledOnce();
     expect(outbox()["m/s"][0]).toMatchObject({ id, state: "failed", inDoubt: true, newId: false });
+  });
+
+  it("a second click joins the same in-flight read", async () => {
+    failed();
+    let answer!: (value: unknown) => void;
+    const fetcher = vi.fn().mockReturnValue(new Promise((resolve) => { answer = resolve; }));
+    vi.stubGlobal("fetch", fetcher);
+    const recheck = vi.fn();
+    mountedRecheck("m", "s", recheck);
+    const checking = checkOutbox("m", "s", id);
+    expect(checkOutbox("m", "s", id)).toBe(checking);
+    answer(receipt("pending"));
+    expect(await checking).toBe("unknown");
+    expect(recheck).toHaveBeenCalledOnce();
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+
+  it("an unmounted view is not called when its in-flight Check completes", async () => {
+    failed();
+    let answer!: (value: unknown) => void;
+    const fetcher = vi.fn().mockReturnValue(new Promise((resolve) => { answer = resolve; }));
+    vi.stubGlobal("fetch", fetcher);
+    const recheck = vi.fn();
+    const unmount = mountedRecheck("m", "s", recheck);
+    const checking = checkOutbox("m", "s", id);
+    unmount();
+    answer(receipt("pending"));
+    expect(await checking).toBe("unknown");
+    expect(recheck).not.toHaveBeenCalled();
+    expect(fetcher).toHaveBeenCalledOnce();
   });
 
   it("a late applied answer cannot overwrite a replacement or another conversation", async () => {
@@ -322,7 +366,8 @@ describe("checking an uncertain send", () => {
     const fetcher = vi.fn().mockReturnValue(new Promise((resolve) => { answer = resolve; }));
     vi.stubGlobal("fetch", fetcher);
     const recheck = vi.fn();
-    const checking = checkOutbox("m", "s", id, recheck);
+    mountedRecheck("m", "s", recheck);
+    const checking = checkOutbox("m", "s", id);
     discardOutbox("m", "s", id);
     keepFailed("m", "s", { id, text: "后来重新写的", images: [], at: 2000 }, new ApiError(502, "x", { delivered: "unknown" }));
     answer(receipt("done"));

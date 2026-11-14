@@ -31,7 +31,7 @@ import { runStep, sameStep, turnDone, type RunStep } from "../../lib/run-step";
 import { stabilizeLines, stableValue } from "../../lib/stable-lines";
 import { planProgress, workLineStyle } from "../../lib/work-groups";
 import { echoed, taggedSeen } from "../../lib/echo";
-import { acceptOutgoing, forgetOutgoing, inSendOrder, keepFailed, keepOutgoing, noteWritten, outboxKey, placeFailed, restoreOutbox, retryOutbox, SENT_GRACE_MS, settleOutbox } from "../../lib/outbox";
+import { acceptOutgoing, forgetOutgoing, inSendOrder, keepFailed, keepOutgoing, noteWritten, outboxKey, placeFailed, registerOutboxRecheck, restoreOutbox, retryOutbox, SENT_GRACE_MS, settleOutbox } from "../../lib/outbox";
 import { apiOp } from "../../lib/ops";
 import { beginMessageSend, observeMessageItems, settleMessageEcho, stopMessageFeedback, useMessageFeedback } from "../../lib/message-send";
 import { conversationKey, pickedLauncher, pickedModel, usePickedLauncher } from "../../lib/assistant-chat";
@@ -351,10 +351,11 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
   trNow.current = { ...tr, hasMore: earlier.liveHasMore };
   const railChat = useRef(`${mid}/${sid}`);
   railChat.current = `${mid}/${sid}`;
-  // A Check's late response may reload only the conversation that asked for it, never its replacement.
-  const recheckTranscript = () => {
-    if (railChat.current === `${mid}/${sid}`) tr.reload();
-  };
+  // The mounted conversation owns late Check refreshes, including a Check started before leaving and returning.
+  const recheckTranscript = useCallback(() => {
+    if (railChat.current === `${mid}/${sid}`) trNow.current.reload();
+  }, [mid, sid]);
+  useEffect(() => registerOutboxRecheck(mid, sid, recheckTranscript), [mid, sid, recheckTranscript]);
   const railRun = useRef(0);
   useEffect(() => () => { railRun.current++; }, [mid, sid]);
   const fine = useFinePointer();
@@ -1235,7 +1236,7 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
   const placed = useMemo(() => placeFailed(lines, outbox), [lines, outbox]);
   const failedBefore = (id: string) => {
     const list = placed.before.get(id);
-    return list ? [<OutboxBubbles key={`failed:${id}`} mid={mid} sid={sid} entries={list} canRetry={!refusedNoRow} recheck={recheckTranscript} />] : [];
+    return list ? [<OutboxBubbles key={`failed:${id}`} mid={mid} sid={sid} entries={list} canRetry={!refusedNoRow} />] : [];
   };
   const lastTasks = useRef<TaskIndex | undefined>(undefined);
   const tasks = useMemo(() => stableValue(lastTasks.current, buildTaskIndex(tr.items)), [tr.items]);
@@ -1950,7 +1951,7 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
               <div key={p.id} className="flex flex-col gap-3">
                 <UserBubble msg={p.msg} mid={mid} sid={sid} pending sendState="sending" />
               </div>
-            ) })), ...placed.rest.map((e) => ({ at: e.at, el: <OutboxBubbles key={`outbox:${e.id}`} mid={mid} sid={sid} entries={[e]} canRetry={!refusedNoRow} recheck={recheckTranscript} /> }))]
+            ) })), ...placed.rest.map((e) => ({ at: e.at, el: <OutboxBubbles key={`outbox:${e.id}`} mid={mid} sid={sid} entries={[e]} canRetry={!refusedNoRow} /> }))]
               .sort((a, b) => a.at - b.at)
               .map((x) => x.el)}
             {(shownPending.some((p) => p.waits) || (sendFeedback !== undefined ? Boolean(sendFeedback) : shownPending.length > 0 || outbox.some((e) => e.state === "sending") || (starting && outgoing > 0))) && (

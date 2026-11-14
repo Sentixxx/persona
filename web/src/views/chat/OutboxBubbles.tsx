@@ -14,14 +14,14 @@ export function deleteFailed(mid: string, sid: string, id: string) {
   if (undo) toast(t("chat-outboxbubbles.deleted"), "ok", { label: t("chat-outboxbubbles.undo"), run: undo });
 }
 
-export function OutboxBubbles({ mid, sid, entries, canRetry = true, recheck }: { mid: string; sid: string; entries: OutboxEntry[]; canRetry?: boolean; recheck: () => void }) {
+export function OutboxBubbles({ mid, sid, entries, canRetry = true }: { mid: string; sid: string; entries: OutboxEntry[]; canRetry?: boolean }) {
   const [checking, setChecking] = useState<string>();
   const checkLock = useRef(false);
   const check = async (id: string) => {
     if (checkLock.current) return;
     checkLock.current = true;
     setChecking(id);
-    try { await checkOutbox(mid, sid, id, recheck); } finally {
+    try { await checkOutbox(mid, sid, id); } finally {
       checkLock.current = false;
       setChecking(undefined);
     }

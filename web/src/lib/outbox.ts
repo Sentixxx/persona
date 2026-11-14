@@ -379,6 +379,14 @@ export type OutboxCheck = "applied" | "not_applied" | "unknown" | "stale";
 const checks = new Map<string, Promise<OutboxCheck>>();
 const rechecks = new Map<string, () => void>();
 
+/** The currently mounted conversation owns transcript refreshes for all its in-flight Checks, including one started
+ *  before a leave and return. An old view's cleanup cannot remove its replacement's registration. */
+export function registerOutboxRecheck(mid: string, sid: string, recheck: () => void): () => void {
+  const key = outboxKey(mid, sid);
+  rechecks.set(key, recheck);
+  return () => { if (rechecks.get(key) === recheck) rechecks.delete(key); };
+}
+
 function messageOperation(op: ClientOperation, mid: string, sid: string, id: string): boolean {
   // Go stores r.URL.Path, already decoded once. Compare the raw ids directly: decoding the receipt again would turn a
   // literal "%2F" in an id into a slash. Also accept the previously encoded form for compatibility.
@@ -404,22 +412,17 @@ function operationFailure(op: ClientOperation): string {
 
 /** Read-only reconciliation of an uncertain send: query its original operation, then let the open transcript's ordinary
  *  echo check run. Only a saved success or a reliable echo settles it; only a saved definite failure brings Retry back. */
-export function checkOutbox(mid: string, sid: string, id: string, recheck?: () => void): Promise<OutboxCheck> {
+export function checkOutbox(mid: string, sid: string, id: string): Promise<OutboxCheck> {
   const key = outboxKey(mid, sid), checkKey = `${key}/${id}`;
   const existing = checks.get(checkKey);
-  if (existing) {
-    // Returning to the conversation joins the same read, but its new view owns the transcript refresh.
-    if (recheck) rechecks.set(checkKey, recheck);
-    return existing;
-  }
+  if (existing) return existing;
   const e = list(key).find((x) => x.id === id);
   if (!e || e.state !== "failed" || !e.inDoubt) return Promise.resolve("stale");
-  if (recheck) rechecks.set(checkKey, recheck);
   const token = getToken(), tokenOwner = credentialOwner();
   const current = () => credentialOwner() === tokenOwner && getToken() === token && list(key).find((x) => x.id === id) === e;
   const reread = () => {
     if (!current()) return;
-    try { rechecks.get(checkKey)?.(); } catch {
+    try { rechecks.get(key)?.(); } catch {
       // A view that closed cannot refresh; the next visit still reconciles the same outbox entry.
     }
   };
@@ -453,12 +456,7 @@ export function checkOutbox(mid: string, sid: string, id: string, recheck?: () =
     return "unknown";
   })();
   checks.set(checkKey, run);
-  const forget = () => {
-    if (checks.get(checkKey) === run) {
-      checks.delete(checkKey);
-      rechecks.delete(checkKey);
-    }
-  };
+  const forget = () => { if (checks.get(checkKey) === run) checks.delete(checkKey); };
   void run.then(forget, forget);
   return run;
 }
