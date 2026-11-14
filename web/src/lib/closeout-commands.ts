@@ -109,32 +109,42 @@ export function closeoutCommandClaims(verified: string): string[] {
   return claims;
 }
 
+type ShellOutcome = "none" | "zero" | "direct";
+
 interface CommandPart {
   words: string[];
   /** The static directory in effect for this command; an unscoped claim does not constrain it. */
   directory?: string;
+  /** Whether the tool result is this command's result, or proves it only when the whole shell exited zero. */
+  outcome: ShellOutcome;
 }
 
-/** The simple commands of a shell line, retaining directory context and discarding only proven harmless wrappers. */
+function nestedOutcome(outer: ShellOutcome, inner: ShellOutcome): ShellOutcome {
+  if (outer === "none" || inner === "none") return "none";
+  return outer === "direct" ? inner : "zero";
+}
+
+/** The simple commands of a shell line, retaining directory and outcome context and discarding harmless wrappers. */
 function commandSegments(command: string, depth = 2, inherited?: string): CommandPart[] {
   const out: CommandPart[] = [];
   let directory = inherited;
   for (const raw of shellSegments(command)) {
-    const words = commandWords(raw);
+    const words = commandWords(raw.words);
     if (!words.length || CONDITIONAL.has(base(words[0]))) return [];
     const script = shellScript(words);
     if (script !== undefined && depth > 0) {
-      out.push(...commandSegments(script, depth - 1, directory));
+      out.push(...commandSegments(script, depth - 1, directory).map((part) => ({ ...part, outcome: nestedOutcome(raw.outcome, part.outcome) })));
       continue;
     }
-    if (["cd", "pushd"].includes(base(words[0]))) {
+    if (["pushd", "popd", "dirs"].includes(base(words[0]))) return [];
+    if (base(words[0]) === "cd") {
       const target = withoutRedirections(words);
       if (target.length !== 2) return [];
       directory = target[1];
       continue;
     }
     const simple = withoutRedirections(words);
-    if (simple.length) out.push({ words: simple, directory });
+    if (simple.length) out.push({ words: simple, directory, outcome: raw.outcome });
   }
   return out;
 }
@@ -154,12 +164,15 @@ function commandWords(input: string[]): string[] {
       continue;
     }
     if (first === "env") {
-      const rest = words.slice(1);
-      for (const word of rest) {
-        if (!word.startsWith("-")) break;
-        if (word.startsWith("-C") || word === "--chdir" || word.startsWith("--chdir=")) return [];
+      words = words.slice(1);
+      while (words.length && words[0].startsWith("-")) {
+        const flag = words[0];
+        if (flag === "--") { words = words.slice(1); break; }
+        if (flag.startsWith("-C") || flag === "--chdir" || flag.startsWith("--chdir=")) return [];
+        const valued = flag === "-u" || flag === "--unset";
+        if (valued && words.length < 2) return [];
+        words = words.slice(valued ? 2 : 1);
       }
-      words = skipFlags(rest, "-u", "--unset", "-C", "--chdir");
       continue;
     }
     if (first === "command") { words = skipFlags(words.slice(1)); continue; }
@@ -199,26 +212,45 @@ function withoutRedirections(words: string[]): string[] {
 
 interface Heredoc { delim: string; strip: boolean }
 
+interface ShellSegment {
+  words: string[];
+  outcome: ShellOutcome;
+}
+
+type ShellJoin = "start" | "sequence" | "and" | "pipeline";
+
 /** Enough shell tokenization for comparison, not execution: quotes, separators, substitutions and here-documents. */
-function shellSegments(command: string): string[][] {
+function shellSegments(command: string): ShellSegment[] {
   const segments: string[][] = [];
+  const joins: ShellJoin[] = [];
+  let join: ShellJoin = "start";
   let words: string[] = [];
   let word = "";
   let inWord = false;
   let subst = 0;
-  let conditional = false;
+  let invalid = false;
+  let incomplete = false;
   let pending: Heredoc[] = [];
   const flush = () => {
     if (!inWord) return;
     words.push(word);
     word = "";
     inWord = false;
+    incomplete = false;
   };
   const end = () => {
     flush();
-    if (words.length) segments.push(words);
+    if (!words.length) return false;
+    segments.push(words);
+    joins.push(join);
     words = [];
     subst = 0;
+    return true;
+  };
+  const separate = (next: ShellJoin) => {
+    if (!end()) { invalid = true; return; }
+    join = next;
+    incomplete = next === "and" || next === "pipeline";
   };
   const add = (text: string) => { word += text; inWord = true; };
   for (let i = 0; i < command.length; i++) {
@@ -241,34 +273,44 @@ function shellSegments(command: string): string[][] {
       const next = command.indexOf("\n", i);
       i = next < 0 ? command.length : next - 1;
     } else if (c === "\n") {
-      end();
+      if (words.length || inWord) separate("sequence");
       i = skipHeredocs(command, i + 1, pending) - 1;
       pending = [];
     } else if (c === " " || c === "\t" || c === "\r") {
       flush();
     } else if (c === ";" || c === "|") {
-      end();
-      if (c === "|" && i + 1 < command.length && command[i + 1] === "|") { conditional = true; i++; }
-      else if (c === "|" && i + 1 < command.length && command[i + 1] === "&") i++;
+      if (c === "|" && command[i + 1] === "|") { invalid = true; i++; }
+      else {
+        separate(c === ";" ? "sequence" : "pipeline");
+        if (c === "|" && command[i + 1] === "&") i++;
+      }
     } else if (c === "&") {
-      if (i + 1 < command.length && command[i + 1] === "&") { end(); i++; }
-      else if ((i + 1 < command.length && command[i + 1] === ">") || word.endsWith(">") || word.endsWith("<")) add("&");
-      else end();
-    } else if (c === "<" && i + 1 < command.length && command[i + 1] === "<" && command[i + 2] !== "<") {
+      if (command[i + 1] === "&") { separate("and"); i++; }
+      else if (command[i + 1] === ">" || word.endsWith(">") || word.endsWith("<")) add("&");
+      else invalid = true;
+    } else if (c === "<" && command[i + 1] === "<" && command[i + 2] !== "<") {
       flush();
       const doc = heredocDelimiter(command, i + 2);
       if (doc.value.delim) pending.push(doc.value);
       i = doc.next - 1;
-    } else if (c === "$" && i + 1 < command.length && command[i + 1] === "(") {
+    } else if (c === "$" && command[i + 1] === "(") {
       add("$("); subst++; i++;
-    } else if (c === "(" && !inWord) {
-      end();
-    } else if (c === ")") {
-      if (subst > 0) { add(")"); subst--; } else end();
+    } else if (c === "(" || c === ")") {
+      if (c === ")" && subst > 0) { add(")"); subst--; }
+      else invalid = true;
     } else add(c);
   }
   end();
-  return conditional ? [] : segments;
+  if (incomplete) invalid = true;
+  if (invalid) return [];
+  const parsed = segments.map((words) => ({ words, outcome: "none" as ShellOutcome }));
+  let trailing = true;
+  for (let i = parsed.length - 1; i >= 0 && trailing; i--) {
+    if (i === parsed.length - 1) parsed[i].outcome = "direct";
+    else if (joins[i + 1] === "and") parsed[i].outcome = "zero";
+    else trailing = false;
+  }
+  return parsed;
 }
 
 function readDoubleQuoted(text: string, start: number, add: (text: string) => void): number {
@@ -320,15 +362,17 @@ function samePart(want: CommandPart, got: CommandPart): boolean {
 }
 
 /** Claimed commands run in order; a directory named by the claim must be the directory in effect for the recorded command. */
-function segmentsMatch(claim: CommandPart[], run: CommandPart[]): boolean {
-  if (!claim.length) return false;
+function segmentsMatch(claim: CommandPart[], run: CommandPart[]): CommandPart[] | undefined {
+  if (!claim.length) return undefined;
+  const matched: CommandPart[] = [];
   let at = 0;
   for (const want of claim) {
     while (at < run.length && !samePart(want, run[at])) at++;
-    if (at === run.length) return false;
+    if (at === run.length) return undefined;
+    matched.push(run[at]);
     at++;
   }
-  return true;
+  return matched;
 }
 
 function commandText(input: Record<string, unknown> | undefined): string {
@@ -357,8 +401,13 @@ export function closeoutCommandEvidence(verified: string, segment: Segment | und
   const tasks = buildTaskIndex(items);
   return claims.map((claim) => {
     const wanted = commandSegments(claim);
-    const found = calls.findLast((call) => segmentsMatch(wanted, call.segments));
-    if (!found) return { claim, state: "not_found" };
+    let found: (typeof calls)[number] | undefined;
+    let matched: CommandPart[] | undefined;
+    for (let i = calls.length - 1; i >= 0; i--) {
+      const parts = segmentsMatch(wanted, calls[i].segments);
+      if (parts) { found = calls[i]; matched = parts; break; }
+    }
+    if (!found || !matched) return { claim, state: "not_found" };
     const call = found.use.tool_use_id ?? "";
     const notes = tasks.notes.get(call) ?? [];
     const last = [...notes].reverse().find((note) => note.status !== "event");
@@ -366,8 +415,10 @@ export function closeoutCommandEvidence(verified: string, segment: Segment | und
     const running = last?.status === "running" || last?.status === "waiting";
     const exitCode = numericExit(found.result) ?? (typeof last?.exit_code === "number" && Number.isSafeInteger(last.exit_code) ? last.exit_code : undefined);
     const isError = typeof found.result?.is_error === "boolean" ? found.result.is_error : undefined;
-    const common = { claim, command: found.command, exitCode, isError, background: background || undefined };
+    const attributed = matched.every((part) => part.outcome === "direct" || (exitCode === 0 && part.outcome === "zero"));
+    const common = { claim, command: found.command, exitCode: attributed ? exitCode : undefined, isError: attributed ? isError : undefined, background: background || undefined };
     if (!found.result) return { ...common, state: "unavailable", reason: "no_result" };
+    if (!attributed) return { ...common, state: "unavailable" };
     if (found.use.full_size || found.result.full_size) return { ...common, state: "unavailable", reason: "truncated" };
     if (exitCode !== undefined) return { ...common, state: "exit" };
     if (running) return { ...common, state: "running" };

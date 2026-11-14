@@ -52,11 +52,14 @@ describe("closeoutCommandEvidence matching", () => {
     expect(result.state === "not_found").toBe(!found);
   });
 
-  it("matches npm test through a shell wrapper, environment, directory change and output redirection", () => {
+  it("matches a valid environment and shell wrapper without inventing an earlier pipeline stage's result", () => {
     const command = "env -i CI=1 timeout 30s bash -lc 'cd web && npm test 2>&1 | tail -n 5'";
     const result = closeoutCommandEvidence("`cd web && npm test`", exchange([{ command, result: { is_error: false } }]))[0];
-    expect(result.state).toBe("error");
-    expect(result.command).toBe(command);
+    expect(result).toMatchObject({ state: "unavailable", command });
+    expect(result.exitCode).toBeUndefined();
+    expect(result.isError).toBeUndefined();
+    const direct = "env -u UNUSED CI=1 timeout 30s bash -lc 'cd web && npm test'";
+    expect(closeoutCommandEvidence("`cd web && npm test`", exchange([{ command: direct, result: { is_error: false } }]))[0]).toMatchObject({ state: "error", command: direct, isError: false });
   });
 
   it("rejects selection-affecting GOFLAGS but keeps a non-narrowing assignment", () => {
@@ -65,6 +68,26 @@ describe("closeoutCommandEvidence matching", () => {
     expect(narrowed.exitCode).toBeUndefined();
     const harmless = closeoutCommandEvidence("`go test ./...`", exchange([{ command: "GOFLAGS=-count=1 go test ./...", result: { is_error: false, outcome: { status: "ok", exit_code: 0 } } }]))[0];
     expect(harmless).toMatchObject({ state: "exit", exitCode: 0 });
+  });
+
+  it("attributes a shell result only to its final command and successful && links", () => {
+    for (const [command, exit_code, is_error] of [
+      ["false && go test ./...; true", 0, false],
+      ["go test ./...; true", 0, false],
+      ["go test ./...; false", 1, true],
+      ["go test ./... | tail -n 5", 0, false],
+    ] as const) {
+      const result = closeoutCommandEvidence("`go test ./...`", exchange([{ command, result: { is_error, outcome: { status: "ok", exit_code } } }]))[0];
+      expect(result).toMatchObject({ state: "unavailable", command });
+      expect(result.exitCode).toBeUndefined();
+      expect(result.isError).toBeUndefined();
+    }
+    for (const [claim, command] of [
+      ["go test ./...", "go test ./... && true"],
+      ["go vet ./... && go test ./...", "go vet ./... && go test ./..."],
+    ]) {
+      expect(closeoutCommandEvidence(`\`${claim}\``, exchange([{ command, result: { is_error: false, outcome: { status: "ok", exit_code: 0 } } }]))[0]).toMatchObject({ state: "exit", exitCode: 0, isError: false });
+    }
   });
 
   it("rejects short-circuited and conditional alternatives, not unconditional separators", () => {
@@ -90,6 +113,29 @@ describe("closeoutCommandEvidence matching", () => {
     expect(changedByEnv).toMatchObject({ state: "not_found" });
     expect(changedByEnv.exitCode).toBeUndefined();
     expect(closeoutCommandEvidence("`npm test`", exchange([{ command: "cd app && npm test", result: { is_error: false, outcome: { status: "ok", exit_code: 0 } } }]))[0]).toMatchObject({ state: "exit", exitCode: 0 });
+  });
+
+  it("rejects env directory changes hidden after valued unset options", () => {
+    for (const command of [
+      "cd server && env -u UNUSED -C web npm test",
+      "cd server && env --unset UNUSED --chdir web npm test",
+    ]) {
+      for (const claim of ["cd server && npm test", "cd web && npm test"]) {
+        const result = closeoutCommandEvidence(`\`${claim}\``, exchange([{ command, result: { is_error: false, outcome: { status: "ok", exit_code: 0 } } }]))[0];
+        expect(result).toMatchObject({ state: "not_found" });
+        expect(result.exitCode).toBeUndefined();
+        expect(result.isError).toBeUndefined();
+      }
+    }
+  });
+
+  it("rejects directory-stack changes instead of guessing the restored directory", () => {
+    for (const command of ["cd server && pushd web && popd && npm test", "cd server && popd && npm test"]) {
+      const result = closeoutCommandEvidence("`cd web && npm test`", exchange([{ command, result: { is_error: false, outcome: { status: "ok", exit_code: 0 } } }]))[0];
+      expect(result).toMatchObject({ state: "not_found" });
+      expect(result.exitCode).toBeUndefined();
+      expect(result.isError).toBeUndefined();
+    }
   });
 
   it("rejects a different npm test selection and reversed command order", () => {
