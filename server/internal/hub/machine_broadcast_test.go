@@ -39,42 +39,29 @@ func TestMachineBroadcastStaleAfterRealRemovalAndReport(t *testing.T) {
 		close(oldDone)
 	}()
 
-	deadline := time.Now().Add(3 * time.Second)
-	for {
+	deadline := 3 * time.Second
+	eventually(t, deadline, "the old broadcast to block on m2", func() bool {
 		buf := make([]byte, 1<<20)
 		n := runtime.Stack(buf, true)
 		stack := string(buf[:n])
-		blocked := false
 		for _, gr := range strings.Split(stack, "\n\n") {
 			if strings.Contains(gr, "sync.Mutex.Lock") &&
 				strings.Contains(gr, "hub.(*Machine).snapshot") &&
 				strings.Contains(gr, "hub.(*Hub).broadcastMachines") {
-				blocked = true
-				break
+				return true
 			}
 		}
-		if blocked {
-			break
-		}
-		if time.Now().After(deadline) {
-			unlockM2()
-			t.Fatalf("old broadcast did not reach m2:\n%s", stack)
-		}
-		time.Sleep(time.Millisecond)
-	}
+		return false
+	})
 
 	goneDone := make(chan struct{})
 	go func() {
 		h.machineGone("m2")
 		close(goneDone)
 	}()
-	for len(h.machinesNow()) != 1 {
-		if time.Now().After(deadline) {
-			unlockM2()
-			t.Fatal("machineGone did not remove m2")
-		}
-		time.Sleep(time.Millisecond)
-	}
+	eventually(t, deadline, "machineGone to remove m2", func() bool {
+		return len(h.machinesNow()) == 1
+	})
 
 	reportDone := make(chan struct{})
 	go func() {
@@ -83,19 +70,12 @@ func TestMachineBroadcastStaleAfterRealRemovalAndReport(t *testing.T) {
 		}}})
 		close(reportDone)
 	}()
-	for {
+	eventually(t, deadline, "the manager report to bring m1 online", func() bool {
 		m1.mu.Lock()
 		online := m1.online
 		m1.mu.Unlock()
-		if online {
-			break
-		}
-		if time.Now().After(deadline) {
-			unlockM2()
-			t.Fatal("manager report did not bring m1 online")
-		}
-		time.Sleep(time.Millisecond)
-	}
+		return online
+	})
 	unlockM2()
 
 	for name, done := range map[string]<-chan struct{}{"old": oldDone, "removal": goneDone, "report": reportDone} {
