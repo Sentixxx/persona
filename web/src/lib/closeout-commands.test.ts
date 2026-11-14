@@ -105,6 +105,44 @@ describe("closeoutCommandEvidence matching", () => {
     }
   });
 
+  it("does not attribute a pipeline skipped by a false guard", () => {
+    const command = "false && tail -n 5 | go test ./...";
+    const result = closeoutCommandEvidence("`go test ./...`", exchange([{ command, result: { is_error: true, outcome: { status: "failed", exit_code: 1 } } }]))[0];
+    expect(result).toMatchObject({ state: "unavailable", command });
+    expect(result.exitCode).toBeUndefined();
+    expect(result.isError).toBeUndefined();
+  });
+
+  it("does not attribute a skipped guarded pipeline through nested shells", () => {
+    const command = "bash -lc 'bash -c \"false && tail -n 5 | go test ./...\"'";
+    const result = closeoutCommandEvidence("`go test ./...`", exchange([{ command, result: { is_error: true, outcome: { status: "failed", exit_code: 1 } } }]))[0];
+    expect(result).toMatchObject({ state: "unavailable", command });
+    expect(result.exitCode).toBeUndefined();
+    expect(result.isError).toBeUndefined();
+  });
+
+  it("attributes a successful guarded pipeline's last stage", () => {
+    const command = "true && tail -n 5 | go test ./...";
+    expect(closeoutCommandEvidence("`go test ./...`", exchange([{ command, result: { is_error: false, outcome: { status: "ok", exit_code: 0 } } }]))[0]).toMatchObject({ state: "exit", command, exitCode: 0, isError: false });
+  });
+
+  it("does not invent an earlier guarded pipeline stage's result", () => {
+    for (const [command, exit_code, is_error] of [
+      ["true && go test ./... | tail -n 5", 0, false],
+      ["false && go test ./... | tail -n 5", 1, true],
+    ] as const) {
+      const result = closeoutCommandEvidence("`go test ./...`", exchange([{ command, result: { is_error, outcome: { status: "ok", exit_code } } }]))[0];
+      expect(result).toMatchObject({ state: "unavailable", command });
+      expect(result.exitCode).toBeUndefined();
+      expect(result.isError).toBeUndefined();
+    }
+  });
+
+  it("attributes a successful && command before the final pipeline", () => {
+    const command = "go test ./... && tail -n 5 | head -n 1";
+    expect(closeoutCommandEvidence("`go test ./...`", exchange([{ command, result: { is_error: false, outcome: { status: "ok", exit_code: 0 } } }]))[0]).toMatchObject({ state: "exit", command, exitCode: 0, isError: false });
+  });
+
   it("keeps direct failures and successful && chains attributable", () => {
     for (const command of ["go test ./...", "true && go test ./...", "go test ./... && true"]) {
       const exitCode = command === "go test ./..." ? 1 : 0;

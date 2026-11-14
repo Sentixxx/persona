@@ -324,11 +324,13 @@ function shellSegments(command: string): ShellSegment[] {
   if (incomplete) invalid = true;
   if (invalid) return [];
   const parsed = segments.map((words) => ({ words, outcome: "none" as ShellOutcome }));
-  let trailing = true;
-  for (let i = parsed.length - 1; i >= 0 && trailing; i--) {
-    if (i === parsed.length - 1) parsed[i].outcome = joins[i] === "and" ? "zero" : "direct";
-    else if (joins[i + 1] === "and") parsed[i].outcome = "zero";
-    else trailing = false;
+  for (let i = parsed.length - 1; i >= 0; i--) {
+    if (i === parsed.length - 1) {
+      let first = i;
+      while (first > 0 && joins[first] === "pipeline") first--;
+      parsed[i].outcome = joins[first] === "and" ? "zero" : "direct";
+    } else if (joins[i + 1] === "and") parsed[i].outcome = "zero";
+    else if (joins[i + 1] === "sequence") break;
   }
   return parsed;
 }
