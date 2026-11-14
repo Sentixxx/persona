@@ -827,12 +827,13 @@ func TestTaskLeaderAcceptedRequiresCompleteCurrentCriteria(t *testing.T) {
 				{name: "missing", checks: valid[:1], want: "has no check"},
 				{name: "duplicate", checks: []ReviewCheck{valid[0], valid[0], valid[1]}, want: "duplicate"},
 				{name: "unknown", checks: append(append([]ReviewCheck{}, valid...), ReviewCheck{Criterion: "old criterion", Met: true, Evidence: "old"}), want: "unknown current done_when"},
-				{name: "unmet", checks: []ReviewCheck{valid[0], {Criterion: before.Supervision.DoneWhen[1], Evidence: "still missing"}}, want: "not met"},
+				{name: "unmet", checks: []ReviewCheck{valid[0], {Criterion: before.Supervision.DoneWhen[1], Evidence: "still missing"}}, want: "not met; use rework for what is missing"},
 				{name: "blank evidence", checks: []ReviewCheck{valid[0], {Criterion: before.Supervision.DoneWhen[1], Met: true, Evidence: "  "}}, want: "non-empty evidence"},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
 					res := s.mcpCall(ctx, "box", "s1", "task_review", mustJSON(map[string]any{"todo_id": w.ID, "verdict": "accepted", "checks": tc.checks}), false)
-					if !res.IsError || !strings.Contains(res.Content[0].Text, tc.want) || !strings.Contains(res.Content[0].Text, "nothing was written") {
+					if !res.IsError || !strings.Contains(res.Content[0].Text, tc.want) || !strings.Contains(res.Content[0].Text, "nothing was written") ||
+						strings.Contains(res.Content[0].Text, "outcome cannot") {
 						t.Fatalf("accepted invalid checks: %+v", res)
 					}
 					after := todoNow(s, w.ID)

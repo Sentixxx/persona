@@ -52,7 +52,7 @@ func completeReviewCriteriaError(doneWhen []string, checks []ReviewCheck) error 
 		case matched[at] != 0:
 			return fmt.Errorf("accepted: current done_when %q has duplicate checks; supply exactly one met check with non-empty evidence for every criterion; nothing was written", doneWhen[at])
 		case !check.Met:
-			return fmt.Errorf("accepted: current done_when %q is not met; use rework for what is missing, or outcome cannot; nothing was written", doneWhen[at])
+			return fmt.Errorf("accepted: current done_when %q is not met; use rework for what is missing; nothing was written", doneWhen[at])
 		case strings.TrimSpace(check.Evidence) == "":
 			return fmt.Errorf("accepted: current done_when %q needs non-empty evidence; nothing was written", doneWhen[at])
 		}
