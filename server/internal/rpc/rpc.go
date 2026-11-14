@@ -167,7 +167,7 @@ func New(prefix string, w io.Writer) *Peer {
 
 // PingActivity is when this connection last showed activity that can make a ping timeout ambiguous: any recent raw
 // input, except that a deadline error response does not prove anything beyond the relay having answered. Partial JSON
-// lines count. A deadline response and later bytes in the same raw read conservatively count only earlier activity.
+// lines count. If ordinary traffic is already buffered behind a deadline in the same raw read, that read counts.
 func (p *Peer) PingActivity() time.Time {
 	if seq := p.readSeq.Load(); seq != 0 && seq == p.deadlineRead.Load() {
 		ns := p.lastActivity.Load()
@@ -264,10 +264,10 @@ func (p *Peer) Serve(ctx context.Context, r io.Reader) error {
 		if deadlineMessage(m) {
 			// Classify the rest of this raw read before waking the caller. Otherwise a deadline followed by an ordinary
 			// message in one packet could still close a live connection; deadline-only read-ahead must not keep it alive.
-			p.deadlineRead.Store(p.readSeq.Load())
 			if nonDeadlineTraffic(sc.buffered()) {
 				p.lastActivity.Store(readAt.UnixNano())
 			}
+			p.deadlineRead.Store(p.readSeq.Load())
 		} else {
 			p.lastActivity.Store(readAt.UnixNano())
 		}
