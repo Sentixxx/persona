@@ -351,6 +351,10 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
   trNow.current = { ...tr, hasMore: earlier.liveHasMore };
   const railChat = useRef(`${mid}/${sid}`);
   railChat.current = `${mid}/${sid}`;
+  // A Check's late response may reload only the conversation that asked for it, never its replacement.
+  const recheckTranscript = () => {
+    if (railChat.current === `${mid}/${sid}`) tr.reload();
+  };
   const railRun = useRef(0);
   useEffect(() => () => { railRun.current++; }, [mid, sid]);
   const fine = useFinePointer();
@@ -1231,7 +1235,7 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
   const placed = useMemo(() => placeFailed(lines, outbox), [lines, outbox]);
   const failedBefore = (id: string) => {
     const list = placed.before.get(id);
-    return list ? [<OutboxBubbles key={`failed:${id}`} mid={mid} sid={sid} entries={list} canRetry={!refusedNoRow} />] : [];
+    return list ? [<OutboxBubbles key={`failed:${id}`} mid={mid} sid={sid} entries={list} canRetry={!refusedNoRow} recheck={recheckTranscript} />] : [];
   };
   const lastTasks = useRef<TaskIndex | undefined>(undefined);
   const tasks = useMemo(() => stableValue(lastTasks.current, buildTaskIndex(tr.items)), [tr.items]);
@@ -1946,7 +1950,7 @@ export function ChatView({ mid, sid, assistant, starting: launching, onToggleSid
               <div key={p.id} className="flex flex-col gap-3">
                 <UserBubble msg={p.msg} mid={mid} sid={sid} pending sendState="sending" />
               </div>
-            ) })), ...placed.rest.map((e) => ({ at: e.at, el: <OutboxBubbles key={`outbox:${e.id}`} mid={mid} sid={sid} entries={[e]} canRetry={!refusedNoRow} /> }))]
+            ) })), ...placed.rest.map((e) => ({ at: e.at, el: <OutboxBubbles key={`outbox:${e.id}`} mid={mid} sid={sid} entries={[e]} canRetry={!refusedNoRow} recheck={recheckTranscript} /> }))]
               .sort((a, b) => a.at - b.at)
               .map((x) => x.el)}
             {(shownPending.some((p) => p.waits) || (sendFeedback !== undefined ? Boolean(sendFeedback) : shownPending.length > 0 || outbox.some((e) => e.state === "sending") || (starting && outgoing > 0))) && (
