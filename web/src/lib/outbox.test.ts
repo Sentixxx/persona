@@ -328,6 +328,39 @@ describe("checking an uncertain send", () => {
     expect(outbox()["m/s"][0]).toMatchObject({ id, state: "failed", inDoubt: true, newId: false });
   });
 
+  it("all mounted views receive the same in-flight Check", async () => {
+    failed();
+    let answer!: (value: unknown) => void;
+    const fetcher = vi.fn().mockReturnValue(new Promise((resolve) => { answer = resolve; }));
+    vi.stubGlobal("fetch", fetcher);
+    const first = vi.fn(), second = vi.fn();
+    mountedRecheck("m", "s", first);
+    mountedRecheck("m", "s", second);
+    const checking = checkOutbox("m", "s", id);
+    answer(receipt("pending"));
+    expect(await checking).toBe("unknown");
+    expect(first).toHaveBeenCalledOnce();
+    expect(second).toHaveBeenCalledOnce();
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+
+  it("unmounting one of two views keeps the other registered for its in-flight Check", async () => {
+    failed();
+    let answer!: (value: unknown) => void;
+    const fetcher = vi.fn().mockReturnValue(new Promise((resolve) => { answer = resolve; }));
+    vi.stubGlobal("fetch", fetcher);
+    const remaining = vi.fn(), closed = vi.fn();
+    mountedRecheck("m", "s", remaining);
+    const unmount = mountedRecheck("m", "s", closed);
+    const checking = checkOutbox("m", "s", id);
+    unmount();
+    answer(receipt("pending"));
+    expect(await checking).toBe("unknown");
+    expect(remaining).toHaveBeenCalledOnce();
+    expect(closed).not.toHaveBeenCalled();
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+
   it("a second click joins the same in-flight read", async () => {
     failed();
     let answer!: (value: unknown) => void;

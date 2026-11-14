@@ -377,14 +377,19 @@ interface ClientOperation {
 
 export type OutboxCheck = "applied" | "not_applied" | "unknown" | "stale";
 const checks = new Map<string, Promise<OutboxCheck>>();
-const rechecks = new Map<string, () => void>();
+const rechecks = new Map<string, Set<() => void>>();
 
-/** The currently mounted conversation owns transcript refreshes for all its in-flight Checks, including one started
- *  before a leave and return. An old view's cleanup cannot remove its replacement's registration. */
+/** Every mounted view of a conversation receives late Check refreshes, including for a Check started before a leave
+ *  and return. Each cleanup removes only its own registration, leaving other mounted views registered. */
 export function registerOutboxRecheck(mid: string, sid: string, recheck: () => void): () => void {
   const key = outboxKey(mid, sid);
-  rechecks.set(key, recheck);
-  return () => { if (rechecks.get(key) === recheck) rechecks.delete(key); };
+  const mounted = rechecks.get(key) ?? new Set<() => void>();
+  mounted.add(recheck);
+  rechecks.set(key, mounted);
+  return () => {
+    mounted.delete(recheck);
+    if (!mounted.size && rechecks.get(key) === mounted) rechecks.delete(key);
+  };
 }
 
 function messageOperation(op: ClientOperation, mid: string, sid: string, id: string): boolean {
@@ -422,8 +427,11 @@ export function checkOutbox(mid: string, sid: string, id: string): Promise<Outbo
   const current = () => credentialOwner() === tokenOwner && getToken() === token && list(key).find((x) => x.id === id) === e;
   const reread = () => {
     if (!current()) return;
-    try { rechecks.get(key)?.(); } catch {
-      // A view that closed cannot refresh; the next visit still reconciles the same outbox entry.
+    // Snapshot the registrations: views mounted or unmounted by a reload take part in the next Check, not this one.
+    for (const recheck of [...(rechecks.get(key) ?? [])]) {
+      try { recheck(); } catch {
+        // A view that closed cannot refresh; the other views still can, and the next visit reconciles the same entry.
+      }
     }
   };
   const run = (async (): Promise<OutboxCheck> => {
