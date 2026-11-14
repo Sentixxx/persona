@@ -232,6 +232,20 @@ func TestServeReturnsOnEOF(t *testing.T) {
 	}
 }
 
+func TestLastReadTracksAnUnfinishedFrame(t *testing.T) {
+	const partial = `{"event":"file.chunk","params":"still being written`
+	p := New("h", io.Discard)
+	if got := p.LastRead(); !got.IsZero() {
+		t.Fatalf("LastRead before Serve = %v, want zero", got)
+	}
+	if err := p.Serve(context.Background(), strings.NewReader(partial)); !errors.Is(err, io.EOF) {
+		t.Fatalf("Serve = %v, want EOF", err)
+	}
+	if got := p.LastRead(); got.IsZero() {
+		t.Fatal("LastRead stayed zero although a partial frame was read")
+	}
+}
+
 func TestCallContextCancelled(t *testing.T) {
 	// The far side never answers, so the caller has to fall back to its context.
 	p := New("h", io.Discard)

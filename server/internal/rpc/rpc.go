@@ -18,6 +18,7 @@ import (
 	"sort"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 type Handler func(ctx context.Context, method string, params json.RawMessage) (any, error)
@@ -41,12 +42,24 @@ type Error struct {
 	// failure (a refused send) rather than show the message.
 	Code string          `json:"code,omitempty"`
 	Data json.RawMessage `json:"data,omitempty"`
+	// pingActivity is the last non-ping message before this response. It lets a ping watchdog ignore the response
+	// itself when deciding whether other traffic kept the connection active.
+	pingActivity time.Time
 }
 
 func (e *Error) Error() string { return e.Message }
 
 // WireError is its code and data, for the extension SDK (sdk/go/ext) to send as they are.
 func (e *Error) WireError() (string, json.RawMessage) { return e.Code, e.Data }
+
+// PingActivity is when the last non-ping message arrived before this error response. It is zero when there was none,
+// or when this error did not come from a ping. A relayed ping timeout is not itself evidence that the node is active.
+func (e *Error) PingActivity() time.Time {
+	if e == nil {
+		return time.Time{}
+	}
+	return e.pingActivity
+}
 
 var ErrClosed = errors.New("rpc: connection closed")
 
@@ -72,6 +85,30 @@ func (e notWrittenError) Error() string        { return e.err.Error() }
 func (e notWrittenError) Unwrap() error        { return e.err }
 func (e notWrittenError) Is(target error) bool { return target == ErrNotWritten }
 
+// ErrWriteDelayed is matched (errors.Is) by what Call answers when its request reached the wire only after waiting
+// behind another write, then its reply wait ended. The error is still the ctx's error. A ping delayed this way says
+// the write channel was busy; it is not the same as an uninterrupted ping that nobody answered.
+var ErrWriteDelayed = errors.New("rpc: request written after waiting for the writer")
+
+type writeDelayedError struct {
+	err       error
+	remaining time.Duration
+}
+
+func (e writeDelayedError) Error() string        { return e.err.Error() }
+func (e writeDelayedError) Unwrap() error        { return e.err }
+func (e writeDelayedError) Is(target error) bool { return target == ErrWriteDelayed }
+
+// WriteDelayRemaining reports how much of the caller's deadline budget remained when its delayed request finished
+// writing. Negative means the write finished after the deadline. The boolean is false for other errors.
+func WriteDelayRemaining(err error) (time.Duration, bool) {
+	var e writeDelayedError
+	if errors.As(err, &e) {
+		return e.remaining, true
+	}
+	return 0, false
+}
+
 // Limits are optional transport budgets for untrusted runtime peers. Zero preserves
 // existing process/node behavior; configure them before Serve or any concurrent call.
 type Limits struct{ FrameBytes, ConcurrentRequests, PendingCalls int }
@@ -83,15 +120,17 @@ type Peer struct {
 	w            io.Writer
 	// wsem is a one-slot semaphore around w, not a mutex: a write can block for good (SSH stdin to a frozen node,
 	// a stalled relay WebSocket), and whoever waits behind it must still return on its ctx or on Close.
-	wsem      chan struct{}
-	nextID    atomic.Int64
-	mu        sync.Mutex
-	pending   map[string]chan message
-	methods   map[string]string // the method of each pending call, by id: what Close reports as cut off
-	suspended bool
-	closed    chan struct{}
-	once      sync.Once
-	err       error
+	wsem         chan struct{}
+	nextID       atomic.Int64
+	lastRead     atomic.Int64 // unix nanoseconds; any positive raw read, including part of a JSON line
+	writeWaiters atomic.Int64
+	mu           sync.Mutex
+	pending      map[string]chan message
+	methods      map[string]string // the method of each pending call, by id: what Close reports as cut off
+	suspended    bool
+	closed       chan struct{}
+	once         sync.Once
+	err          error
 
 	OnRequest Handler
 	OnEvent   EventHandler
@@ -135,6 +174,32 @@ func New(prefix string, w io.Writer) *Peer {
 	return &Peer{prefix: prefix, w: w, pending: map[string]chan message{}, methods: map[string]string{}, running: map[string]context.CancelFunc{}, closed: make(chan struct{}), wsem: make(chan struct{}, 1)}
 }
 
+// LastRead is when Serve last received bytes, even if they were only part of an unfinished JSON line. Unlike a
+// successful local write, this is evidence that the other end sent something. The zero time means nothing was read.
+func (p *Peer) LastRead() time.Time {
+	ns := p.lastRead.Load()
+	if ns == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, ns)
+}
+
+// WriteWaiters is how many messages are queued for the writer, not counting the write that currently owns it.
+func (p *Peer) WriteWaiters() int64 { return p.writeWaiters.Load() }
+
+type readActivity struct {
+	peer *Peer
+	r    io.Reader
+}
+
+func (r readActivity) Read(b []byte) (int, error) {
+	n, err := r.r.Read(b)
+	if n > 0 {
+		r.peer.lastRead.Store(time.Now().UnixNano())
+	}
+	return n, err
+}
+
 // Serve reads messages until r fails; it returns the read error.
 func (p *Peer) Serve(ctx context.Context, r io.Reader) error {
 	if p.Limits.ConcurrentRequests > 0 {
@@ -154,12 +219,16 @@ func (p *Peer) Serve(ctx context.Context, r io.Reader) error {
 	if p.Limits.FrameBytes > 0 {
 		maximum = p.Limits.FrameBytes
 	}
-	sc := newLineReader(r, maximum) // a bufio.Scanner that gives back what a long line grew (linereader.go)
+	sc := newLineReader(readActivity{peer: p, r: r}, maximum) // raw reads count partial lines as activity too
+	var lastActivity time.Time
 	for sc.Scan() {
+		readAt := p.LastRead()
 		var m message
 		if err := json.Unmarshal(sc.Bytes(), &m); err != nil {
+			lastActivity = readAt
 			continue
 		}
+		pingResponse := false
 		switch {
 		case m.Method != "":
 			// Registered before the handler starts: a cancel right behind the request finds it.
@@ -192,6 +261,10 @@ func (p *Peer) Serve(ctx context.Context, r io.Reader) error {
 			}
 		case m.ID != "":
 			p.mu.Lock()
+			pingResponse = p.methods[m.ID] == "ping"
+			if pingResponse && m.Error != nil {
+				m.Error.pingActivity = lastActivity
+			}
 			ch := p.pending[m.ID]
 			if ch != nil {
 				ch <- m // publish the reply before WaitPending can observe its completion
@@ -199,6 +272,12 @@ func (p *Peer) Serve(ctx context.Context, r io.Reader) error {
 			delete(p.pending, m.ID)
 			delete(p.methods, m.ID)
 			p.mu.Unlock()
+		}
+		deadlineResponse := m.ID != "" && m.Error != nil && m.Error.Code == "" && m.Error.Message == context.DeadlineExceeded.Error()
+		if !pingResponse && !deadlineResponse {
+			// A late ping may already have forgotten its method. Never let any deadline response become the
+			// "other traffic" that keeps a later ping timeout alive.
+			lastActivity = readAt
 		}
 	}
 	err := sc.Err()
@@ -291,35 +370,61 @@ func plainEncoder(w io.Writer) *json.Encoder {
 }
 
 func (p *Peer) writeContext(ctx context.Context, m message) error {
+	_, err := p.writeContextObserved(ctx, m)
+	return err
+}
+
+type writeObservation struct {
+	delayed   bool
+	remaining time.Duration
+}
+
+// writeContextObserved also reports whether this message had to wait behind another writer before reaching the wire,
+// and how much of the caller's deadline remained when the write finished.
+func (p *Peer) writeContextObserved(ctx context.Context, m message) (writeObservation, error) {
 	b, err := encodeLine(m)
 	if err != nil {
-		return err
+		return writeObservation{}, err
 	}
 	if p.Limits.FrameBytes > 0 && len(b) > p.Limits.FrameBytes {
-		return errFrameBudget
+		return writeObservation{}, errFrameBudget
 	}
 	// Wait for the writer, but not past the caller or the connection: the write ahead may never finish. A write
-	// already under way cannot be interrupted.
+	// already under way cannot be interrupted. Try the immediate acquisition first so delayed means another write held
+	// the slot when this message arrived, rather than merely that a select chose one ready case over another.
+	observation := writeObservation{}
 	select {
 	case p.wsem <- struct{}{}:
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-p.closed:
-		return ErrClosed
+	default:
+		observation.delayed = true
+		p.writeWaiters.Add(1)
+		select {
+		case p.wsem <- struct{}{}:
+			p.writeWaiters.Add(-1)
+		case <-ctx.Done():
+			p.writeWaiters.Add(-1)
+			return observation, ctx.Err()
+		case <-p.closed:
+			p.writeWaiters.Add(-1)
+			return observation, ErrClosed
+		}
 	}
 	defer func() { <-p.wsem }()
 	// Both may have become ready together and select picks at random: check again so a cancelled request never
 	// reaches the wire.
 	if err := ctx.Err(); err != nil {
-		return err
+		return observation, err
 	}
 	select {
 	case <-p.closed:
-		return ErrClosed
+		return observation, ErrClosed
 	default:
 	}
 	_, err = p.w.Write(b)
-	return err
+	if deadline, ok := ctx.Deadline(); ok {
+		observation.remaining = deadline.Sub(time.Now())
+	}
+	return observation, err
 }
 
 // Call sends a request and decodes the result into out (if non-nil). Params that are Appended are written straight
@@ -366,7 +471,8 @@ func (p *Peer) Call(ctx context.Context, method string, params any, out any) err
 		}
 		req = message{ID: id, Method: method, Params: raw}
 	}
-	if err := p.writeContext(ctx, req); err != nil {
+	writeObservation, err := p.writeContextObserved(ctx, req)
+	if err != nil {
 		if cerr := ctx.Err(); cerr != nil && errors.Is(err, cerr) {
 			return notWrittenError{err} // waited for the writer (a long write ahead) and gave up: never on the wire
 		}
@@ -379,6 +485,9 @@ func (p *Peer) Call(ctx context.Context, method string, params any, out any) err
 		if p.Cancels[method] {
 			params, _ := json.Marshal(map[string]string{"id": id})
 			_ = p.write(message{Event: cancelEvent, Params: params})
+		}
+		if writeObservation.delayed {
+			return writeDelayedError{err: ctx.Err(), remaining: writeObservation.remaining}
 		}
 		return ctx.Err()
 	case <-p.closed:
