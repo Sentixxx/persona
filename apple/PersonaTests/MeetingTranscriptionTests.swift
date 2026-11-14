@@ -1749,7 +1749,9 @@ private actor SlowPut {
         let final = try #require(Words.facts(.init(mode: .hub, state: "final", gaps: [.init(from: 600, to: 642.5)]), asked: .hub,
                                              gapUpload: .uploading))
         #expect(!final.busy && final.state != finishing.state && final.upload == nil, "final: no more uploads said")
-        #expect(final.gaps?.contains("10:00") == true && final.gaps?.contains("10:42") == true)
+        let showsFinalGapStart: Bool = final.gaps?.contains("10:00") == true
+        let showsFinalGapEnd: Bool = final.gaps?.contains("10:42") == true
+        #expect(showsFinalGapStart && showsFinalGapEnd)
         let failed = try #require(Words.facts(.init(mode: .hub, state: "failed"), asked: .hub, gapUpload: .idle))
         #expect(!failed.busy && Set([failed.state, final.state, finishing.state]).count == 3)
         let unknown = try #require(Words.facts(.init(mode: .hub, state: "someday"), asked: .hub, gapUpload: .idle))
@@ -1757,7 +1759,11 @@ private actor SlowPut {
 
         let many = (0..<5).map { MeetingGap(from: Double($0 * 100), to: Double($0 * 100 + 10)) }
         let spans = Words.spans(many)
-        #expect(spans.contains("0:00") && spans.contains("3:30") && !spans.contains("6:40") && spans.contains("2"),
+        let showsFirstSpan: Bool = spans.contains("0:00")
+        let showsThirdSpanEnd: Bool = spans.contains("3:30")
+        let omitsFourthSpan: Bool = !spans.contains("6:40")
+        let showsRemainingCount: Bool = spans.contains("2")
+        #expect(showsFirstSpan && showsThirdSpanEnd && omitsFourthSpan && showsRemainingCount,
                 "the first three, then how many more")
         #expect(Words.spans(Array(many.prefix(1))) == "0:00–0:10")
     }
