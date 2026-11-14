@@ -83,8 +83,9 @@ export class ScreenVideoStream {
   private partialSince: number | null = null;
   /** The quality tiers (#6558), when the page drives them; they start once the helper's hello lists them too. */
   readonly tiers: ScreenVideoTiers | null;
-  /** A frame came since the last `hello`: the helper's capture is running. Before that a tier waits (`held`): an
-   *  `update` that reaches Persona Screen before its capture has started can be lost (#7856). */
+  /** A frame came since the last `hello` or `paused`: the helper's capture is running. Before that a tier waits
+   *  (`held`), as on the iPhone: an `update` that reaches Persona Screen before its capture has started can be lost
+   *  (#7856), and capture starts again on resume. A new `hello` drops a held tier: its policy picks its own start. */
   private framed = false;
   private held: Change | null = null;
 
@@ -250,6 +251,7 @@ export class ScreenVideoStream {
           break;
         case "paused":
           this.heard(true);
+          this.framed = false; // capture starts again on resume: changes wait for its first frame
           this.newest?.picture.close();
           this.newest = null;
           this.onEvent({ type: "paused", reason: m.reason });

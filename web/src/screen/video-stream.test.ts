@@ -145,7 +145,7 @@ describe("ScreenVideoStream", () => {
     expect(ticks, "no decisions while capture is paused").toHaveBeenCalledTimes(4);
   });
 
-  it("with tiers: changes before the first frame wait for it, the newest going out; a new hello waits again", () => {
+  it("with tiers: changes before the first frame wait for it, the newest going out; again after paused and a new hello", () => {
     const t = scripted(), events: StreamEvent[] = [];
     const tiers = new ScreenVideoTiers({ bias: "auto", budget: { maxKbps: 12_000, fps: 60 }, maxSize: 1920, link: null, remembered: null });
     const s = new ScreenVideoStream(t, start, (e) => events.push(e), { makeDecoder: fakeDecoders().make, nowMicros: () => 1_000_000, tiers });
@@ -160,10 +160,20 @@ describe("ScreenVideoStream", () => {
     const updates = () => t.sent.filter((m) => m.type === "update");
     expect(updates()).toHaveLength(1);
     expect(events.filter((e) => e.type === "tier").map((e) => (e as { change: { reason: string } }).change.reason)).toEqual(["choice"]);
-    // capture starts over (a resumed stream): its hello's tier waits for its first frame
-    t.feed(tiered);
+    // paused (the Mac locked): capture starts again on resume, so a change waits for the next frame
+    t.feed(framed({ type: "paused", reason: "locked" }));
+    s.tierBias("sharper");
     expect(updates()).toHaveLength(1);
-    t.feed(new Uint8Array([...message(1), ...message(2)]));
+    t.feed(framed({ type: "resumed" }));
+    t.feed(message(2));
     expect(updates()).toHaveLength(2);
+    // capture starts over with a new hello: a change held from before is dropped, the new policy's start waits
+    t.feed(tiered);
+    s.tierBias("smoother");
+    t.feed(tiered);
+    expect(updates()).toHaveLength(2);
+    t.feed(new Uint8Array([...message(1), ...message(2)]));
+    expect(updates()).toHaveLength(3);
+    expect(events.filter((e) => e.type === "tier").map((e) => (e as { change: { reason: string } }).change.reason).at(-1)).toBe("start");
   });
 });

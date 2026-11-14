@@ -728,8 +728,9 @@ Android don't decode video yet: they keep RFB and show no switcher.
     several reads; refinement passes apart), from each decode time and from each picture drawn or replaced before the
     next animation frame; the helper's `timing` goes to the policy, which decides every 250 ms (not while capture is
     paused). Each change goes out as an `update` (`scale`, `fps`, `min_kbps`, `target_kbps`, `max_kbps`), but not before
-    the first frame after a `hello`: until then the newest change waits, since Persona Screen can lose an `update`
-    that comes before its capture has started (#7856). ⋯ › Quality
+    the first frame after a `hello` or `paused` (capture starts again on resume): until then the newest change waits,
+    as on the iPhone, since Persona Screen can lose an `update` that comes before its capture has started (#7856); a
+    new `hello` drops it. ⋯ › Quality
     (Auto, Sharper, Smoother, kept per Mac) moves the bias at once; the data cap and the mobile-data choice go to the
     policy (`setBudget`). The route is the hub's relay, read as an unmeasured one (the relay over Wi-Fi); the tier a
     computer settles on is where its next stream on the page starts. A helper without tiers keeps the cap as before.
