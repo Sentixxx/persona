@@ -23,7 +23,8 @@ import (
 // ask_escalate: every card of the task still waiting then rings the user once, with the supervisor's reason and
 // recommendation, and a leader's escalation is an escalated entry in the main conversation, so the layers above know.
 // Approvals stay the user's: no conversation can allow a tool or approve a plan (interaction_answer refuses them), so
-// they reach the user through ask_escalate or the timeout. A card nobody handles within askHoldFor moves one rung up
+// they reach the user through ask_escalate, when their supervisor itself needs the user, or at the absolute 15-minute
+// deadline. A card nobody handles within askHoldFor moves one rung up
 // (leader, main conversation, the user; or the background supervisor, then the user, for a task no leader supervises),
 // so nothing waits on a supervisor for ever.
 //
@@ -41,15 +42,20 @@ var askHoldFor = 5 * time.Minute
 // keep a card for ever.
 var askBusyMax = time.Hour
 
+// askOwnerOnlyDeadline bounds a permission or plan's whole route, however many rungs it crosses and however long a
+// rung stays busy. Only the owner can answer these cards, so they cannot spend an unbounded time held by supervisors.
+var askOwnerOnlyDeadline = 15 * time.Minute
+
 // askRoute is where a pending card is on its way to the user: the conversations it goes through, nearest first (its
 // task's leader, then the main conversation), the one it is with (step; past the last: the user's), and since when.
 type askRoute struct {
-	todo    string
-	machine string // where its rungs are: the assistant's conversations, on the assistant's machine
-	ladder  []string
-	step    int
-	since   time.Time
-	held    time.Time // when it reached this rung: askBusyMax counts from here
+	todo     string
+	machine  string // where its rungs are: the assistant's conversations, on the assistant's machine
+	ladder   []string
+	step     int
+	routedAt time.Time // when this route began: an owner-only card's absolute deadline counts from here
+	since    time.Time
+	held     time.Time // when it reached this rung: askBusyMax counts from here
 	// maybeTold: a question card restored after a restart. Whether the user was told of it is not kept, so its
 	// timeout only puts it back on the apps (ringAsks), not ringing them a second time. An approval restored so (a
 	// permission or a plan) is not: no conversation may answer it, so its timeout rings.
@@ -142,7 +148,7 @@ func (s *Service) routeAsk(ix proto.Interaction) bool {
 		return false
 	}
 	now := time.Now()
-	p.route = &askRoute{todo: todo, machine: home, ladder: ladder, since: now, held: now}
+	p.route = &askRoute{todo: todo, machine: home, ladder: ladder, routedAt: now, since: now, held: now}
 	p.ix.Delegating = true
 	s.fleet.mu.Unlock()
 	shown := ix
@@ -214,12 +220,14 @@ func (s *Service) routedTo(id, self string, main bool) (string, bool) {
 // askTick moves each card held past askHoldFor one rung up: to the next conversation, or to the user, every card of
 // the same task that reached the user at once going out as one. The time a card has spent with a conversation on a turn
 // does not count (busyLocked): it is being worked through, not waiting to be looked at. A conversation still on a turn
-// askBusyMax after the card came is stuck instead, and its time counts again.
+// askBusyMax after the card came is stuck instead, and its time counts again. A permission or plan instead goes straight
+// to the user at its absolute deadline, and moves up at once when its current supervisor itself needs the user.
 func (s *Service) askTick(now time.Time) {
 	type up struct {
 		todo, to string
 		ix       proto.Interaction
 		step     int
+		reason   string
 	}
 	var ups []up
 	toUser := map[string][]string{}
@@ -229,30 +237,54 @@ func (s *Service) askTick(now time.Time) {
 		if r == nil || p.claimed {
 			continue
 		}
-		if r.busyLocked(s) && now.Sub(r.held) < askBusyMax {
-			r.since = now // its conversation is on a turn: the hold starts again once the turn ends
+		ownerOnly := p.ix.Kind == proto.IxPermission || p.ix.Kind == proto.IxPlan
+		if ownerOnly && !now.Before(r.routedAt.Add(askOwnerOnlyDeadline)) {
+			r.step = len(r.ladder)
+			toUser[r.todo] = append(toUser[r.todo], id)
 			continue
 		}
-		if now.Sub(r.since) < askHoldFor {
-			continue
+		release := ownerOnly && r.needsYouLocked(s)
+		if !release {
+			if r.busyLocked(s) && now.Sub(r.held) < askBusyMax {
+				r.since = now // its conversation is on a turn: the hold starts again once the turn ends
+				continue
+			}
+			if now.Sub(r.since) < askHoldFor {
+				continue
+			}
 		}
 		r.step++
 		r.since, r.held = now, now
 		if to := r.at(); to != "" {
-			ups = append(ups, up{r.todo, to, p.ix, r.step})
+			reason := fmt.Sprintf("not handled in %v", askHoldFor)
+			if release {
+				reason = "its supervisor needs the user"
+			}
+			ups = append(ups, up{r.todo, to, p.ix, r.step, reason})
 		} else {
 			toUser[r.todo] = append(toUser[r.todo], id)
 		}
 	}
 	s.fleet.mu.Unlock()
 	for _, u := range ups {
-		s.logf("ask %s: not handled in %v, up to %s", u.ix.ID, askHoldFor, u.to)
+		s.logf("ask %s: %s, up to %s", u.ix.ID, u.reason, u.to)
 		s.signalAsk(u.todo, u.to, u.ix, u.step)
 	}
 	for todo, ids := range toUser {
 		s.logf("asks %v of task %s: not handled in time, to the user", ids, todo)
 		s.ringAsks(todo, ids, nil)
 	}
+}
+
+// needsYouLocked: the conversation holding the card needs the user itself, so it cannot handle an owner-only card.
+// s.fleet.mu is held.
+func (r *askRoute) needsYouLocked(s *Service) bool {
+	to := r.at()
+	if to == "" || r.machine == "" {
+		return false
+	}
+	mk, ok := s.fleet.stateSince[[2]string{r.machine, to}]
+	return ok && mk.state == proto.StateNeedsYou
 }
 
 // busyLocked: the conversation the card waits with is on a turn now, as the state the apps show it says: it is working
