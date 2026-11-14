@@ -204,6 +204,36 @@ func (r readActivity) Read(b []byte) (int, error) {
 	return n, err
 }
 
+func deadlineMessage(m message) bool {
+	return m.ID != "" && m.Error != nil && m.Error.Code == "" && m.Error.Message == context.DeadlineExceeded.Error()
+}
+
+// nonDeadlineTraffic reports traffic already buffered behind a deadline reply that cannot be another deadline reply.
+// Complete later lines are decoded exactly. An unfinished line counts only once its prefix identifies an event,
+// request or result; a partial error remains uncounted until its whole line proves that it is not another deadline.
+func nonDeadlineTraffic(b []byte) bool {
+	for len(b) > 0 {
+		i := bytes.IndexByte(b, '\n')
+		if i < 0 {
+			break
+		}
+		var m message
+		if err := json.Unmarshal(dropCR(b[:i]), &m); err != nil || !deadlineMessage(m) {
+			return true
+		}
+		b = b[i+1:]
+	}
+	tail := bytes.TrimSpace(b)
+	if len(tail) == 0 {
+		return false
+	}
+	var m message
+	if err := json.Unmarshal(tail, &m); err == nil {
+		return !deadlineMessage(m)
+	}
+	return bytes.Contains(tail, []byte(`"event"`)) || bytes.Contains(tail, []byte(`"method"`)) || bytes.Contains(tail, []byte(`"result"`))
+}
+
 // Serve reads messages until r fails; it returns the read error.
 func (p *Peer) Serve(ctx context.Context, r io.Reader) error {
 	if p.Limits.ConcurrentRequests > 0 {
@@ -230,6 +260,16 @@ func (p *Peer) Serve(ctx context.Context, r io.Reader) error {
 		if err := json.Unmarshal(sc.Bytes(), &m); err != nil {
 			p.lastActivity.Store(readAt.UnixNano())
 			continue
+		}
+		if deadlineMessage(m) {
+			// Classify the rest of this raw read before waking the caller. Otherwise a deadline followed by an ordinary
+			// message in one packet could still close a live connection; deadline-only read-ahead must not keep it alive.
+			p.deadlineRead.Store(p.readSeq.Load())
+			if nonDeadlineTraffic(sc.buffered()) {
+				p.lastActivity.Store(readAt.UnixNano())
+			}
+		} else {
+			p.lastActivity.Store(readAt.UnixNano())
 		}
 		switch {
 		case m.Method != "":
@@ -270,13 +310,6 @@ func (p *Peer) Serve(ctx context.Context, r io.Reader) error {
 			delete(p.pending, m.ID)
 			delete(p.methods, m.ID)
 			p.mu.Unlock()
-		}
-		deadlineResponse := m.ID != "" && m.Error != nil && m.Error.Code == "" && m.Error.Message == context.DeadlineExceeded.Error()
-		if deadlineResponse {
-			// A late or relayed ping timeout is not itself the traffic that proves a node is still working.
-			p.deadlineRead.Store(p.readSeq.Load())
-		} else {
-			p.lastActivity.Store(readAt.UnixNano())
 		}
 	}
 	err := sc.Err()
