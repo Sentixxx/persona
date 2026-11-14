@@ -109,4 +109,23 @@ class TasksStorePushInterceptsTest {
         assertEquals("New", store.heldPushes.value.p1.single().summaries.single())
         scope.cancel()
     }
+
+    @Test fun offlineTransitionClearsLoadingWhenAStaleReadIsCancelled() = runBlocking {
+        val api = Api(true, listOf(row("2026-11-14T02:00:00Z", "Old")))
+        api.gate = CompletableDeferred()
+        val connection = Connection()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        val store = TasksStore(api, connection, scope, clock = Clock.fixed(now, ZoneId.of("Asia/Shanghai")))
+        val first = scope.launch { store.refreshPushIntercepts() }
+        yield()
+        assertTrue(store.heldPushesLoading.value)
+        connection.state.value = ConnectionState.Connecting
+        assertFalse(store.heldPushesLoading.value)
+        connection.state.value = ConnectionState.WaitingForNetwork
+        assertFalse(store.heldPushesLoading.value)
+        api.gate?.complete(Unit)
+        first.join()
+        assertFalse(store.heldPushesLoading.value)
+        scope.cancel()
+    }
 }

@@ -197,6 +197,7 @@ class TasksStore(
                     refreshPushIntercepts()
                 } else {
                     heldPushesRevision.incrementAndGet()
+                    _heldPushesLoading.value = false
                 }
             }
         }
