@@ -389,6 +389,14 @@ It signs in with the login keychain's generic password `persona-vnc-bench` (adde
   its own shown in a browser on that Mac; per scene the Mbit/s, updates a second, input-to-pixels latency (the page's
   marker changing colour, split into getting the input and drawing it back), and the picture's SSIM / PSNR against a
   second, lossless connection of the same moment. `-delay` and `-rate` add a phone link's latency and bandwidth.
+- `wheel -apps page,finder,terminal -browser <executable> [-replay <schedules.json>]` (#7775): how far wheel notches
+  scroll on that Mac. One notch at a time, then 20 at gaps from 100 ms down to none (does macOS speed quick notches up,
+  or merge them?), then each named schedule (`{"name": "ms:n,…"}`, a gesture's notches at the times the app sends
+  them). A browser page reports its own scroll position and each wheel event's `deltaY`; Finder and Terminal are
+  measured from the picture, by how far their rows moved. It uses only windows it opens itself (a browser of its own
+  with a profile of its own, a Finder window on a folder of its own, a Terminal window running its own script),
+  closes them and brings back the app that was in front. It starts only after a minute with no input on the Mac and
+  stops at the first key, click or pointer move it did not send.
 - `record`: what the server sends, for replaying through the app's own client (decode CPU, bytes copied).
 - `trace -scene <scene> -rec-mode <mode> [-trace-area x,y,w,h|page|stage]`: each request and each update's start, end,
   size and painted box in order, to see how the server answers a way of asking (or a part of the screen).
@@ -802,10 +810,13 @@ iPhone's side comes next.
   another VPN or a proxy); `PathPolicy` picks the route: by minimum round trip, a direct route winning a tie with the
   relay; at the stream's start at once, later only after 10 s healthy, a clear gain and 20 s since the last move; a lost
   route left at once and a degraded one (loss ≥ 5 %, or 50 ms over its own floor for 5 s) when another is healthy.
-- **The iPhone** (`apple/Persona/Screen/ScreenLinkRoutes.swift`): off in release builds until the real-device
-  acceptance has passed (`ScreenRoutes.releaseEnabled`, one line to turn on); a DEBUG build launched with
-  `-showScreenRoutes` has it meanwhile. While offered, **Settings › This Device › Live Screen**
-  (`LiveScreenSettingsView`) has one switch, "Choose the Fastest Route Automatically", on by default; turned off, the
+- **The iPhone** (`apple/Persona/Screen/ScreenLinkRoutes.swift`): on since the acceptance before real devices passed
+  (a simulator on a real hub and a Mac on the same LAN: the direct route within a second, back on the relay 2.6 s after
+  it went silent and 1.1 s after it broke, direct again 39 s after it recovered, every typed byte once). Still to check
+  on a real iPhone: the Tailscale route, the local network question, and Wi-Fi to cellular. `ScreenRoutes.releaseEnabled`
+  false turns it off in the next build; the hub's `screen_link_off` keeps every live screen on its relays at once.
+  **Settings › This Device › Live Screen** (`LiveScreenSettingsView`, shown when a computer offers its live screen)
+  has one switch, "Choose the Fastest Route Automatically", on by default; turned off, the
   phone asks for no session (everything through the hub, as before) and live sessions move back to their relays at
   once. The quality tiers (#6396) add their own section to the same page. The stats overlay's Route row shows the route's
   round trip and packet loss and why it last changed ("Faster route", "Previous route dropped", "Network changed", …, or
@@ -820,7 +831,7 @@ iPhone's side comes next.
   certificate accepted only by its SHA-256 from `paths`) as `ProbePlan` says (at once, then 30 s doubling to 5 min after a
   failure, again at once when the phone's networks change), and hands what connects to the session, which pings and
   measures every route (the one in use every second, the others every two) and runs the policy once a second.
-- **Moving** (still only with `-showScreenRoutes`): when the policy picks another route, every live channel moves
+- **Moving**: when the policy picks another route, every live channel moves
   there (to its own relay for the relay): `use` with what the phone has of each, and nothing more goes out on it until
   the node's `resumed` says what the node has; each side then sends on from there, so RFB loses and repeats nothing,
   and a stale video backlog is dropped for a keyframe on the node's side. A direct route that fails, or stays silent for
