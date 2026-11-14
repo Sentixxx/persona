@@ -243,6 +243,47 @@ describe("checking an uncertain send", () => {
     expect(outbox()["m/s"][0]).toMatchObject({ id, state: "failed", inDoubt: true });
   });
 
+  it.each([
+    { state: "done", wanted: "applied", entry: { state: "sent", inDoubt: undefined } },
+    { state: "failed", wanted: "not_applied", entry: { state: "failed", inDoubt: false, newId: true } },
+  ])("accepts the hub's decoded target for an escaped session id: $state", async ({ state, wanted, entry }) => {
+    const sid = "row/with/slashes", key = `m/${sid}`;
+    keepFailed("m", sid, { id, text: "escaped target", images: [], at: 1000 }, new ApiError(502, "x", { delivered: "unknown" }));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response({ id, kind: "message", target: { path: "/api/v1/sessions/m/row/with/slashes/messages" }, state })));
+    expect(await checkOutbox("m", sid, id)).toBe(wanted);
+    expect(outbox()[key][0]).toMatchObject({ id, ...entry });
+  });
+
+  it("rejects another decoded target for an escaped session id", async () => {
+    const sid = "row/with/slashes", key = `m/${sid}`;
+    keepFailed("m", sid, { id, text: "escaped target", images: [], at: 1000 }, new ApiError(502, "x", { delivered: "unknown" }));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response({ id, kind: "message", target: { path: "/api/v1/sessions/m/row/with/other/messages" }, state: "done" })));
+    expect(await checkOutbox("m", sid, id)).toBe("unknown");
+    expect(outbox()[key][0]).toMatchObject({ id, state: "failed", inDoubt: true, newId: false });
+  });
+
+  it("accepts the hub's decoded target when the session id contains a literal percent escape", async () => {
+    const sid = "row%2Fwith", key = `m/${sid}`;
+    keepFailed("m", sid, { id, text: "literal percent", images: [], at: 1000 }, new ApiError(502, "x", { delivered: "unknown" }));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response({ id, kind: "message", target: { path: "/api/v1/sessions/m/row%2Fwith/messages" }, state: "done" })));
+    expect(await checkOutbox("m", sid, id)).toBe("applied");
+    expect(outbox()[key][0]).toMatchObject({ id, state: "sent", inDoubt: undefined });
+  });
+
+  it("keeps literal percent escapes intact and still accepts the encoded compatibility target", async () => {
+    const sid = "row%2Fwith", key = `m/${sid}`;
+    keepFailed("m", sid, { id, text: "literal percent", images: [], at: 1000 }, new ApiError(502, "x", { delivered: "unknown" }));
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(response({ id, kind: "message", target: { path: "/api/v1/sessions/m/row/with/messages" }, state: "done" }))
+      .mockResolvedValueOnce(response({ id, kind: "message", target: { path: "/api/v1/sessions/m/row%252Fwith/messages" }, state: "done" }));
+    vi.stubGlobal("fetch", fetcher);
+    expect(await checkOutbox("m", sid, id)).toBe("unknown");
+    expect(outbox()[key][0]).toMatchObject({ id, state: "failed", inDoubt: true });
+    expect(await checkOutbox("m", sid, id)).toBe("applied");
+    expect(outbox()[key][0]).toMatchObject({ id, state: "sent", inDoubt: undefined });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
   it("a definite failure restores ordinary Retry, which then uses a new id", async () => {
     failed();
     const body = Buffer.from(JSON.stringify({ error: "会话已结束", delivered: "none" })).toString("base64");
@@ -255,6 +296,22 @@ describe("checking an uncertain send", () => {
     expect(await retryOutbox("m", "s", id)).toBe(true);
     expect(fetcher.mock.calls[1][0]).toBe("/api/v1/sessions/m/s/messages");
     expect(JSON.parse(fetcher.mock.calls[1][1].body).client_msg_id).not.toBe(id);
+  });
+
+  it("a remounted Check uses the latest recheck callback for its one in-flight read", async () => {
+    failed();
+    let answer!: (value: unknown) => void;
+    const fetcher = vi.fn().mockReturnValue(new Promise((resolve) => { answer = resolve; }));
+    vi.stubGlobal("fetch", fetcher);
+    const unmounted = vi.fn(), remounted = vi.fn();
+    const checking = checkOutbox("m", "s", id, unmounted);
+    expect(checkOutbox("m", "s", id, remounted)).toBe(checking);
+    answer(receipt("pending"));
+    expect(await checking).toBe("unknown");
+    expect(unmounted).not.toHaveBeenCalled();
+    expect(remounted).toHaveBeenCalledOnce();
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(outbox()["m/s"][0]).toMatchObject({ id, state: "failed", inDoubt: true, newId: false });
   });
 
   it("a late applied answer cannot overwrite a replacement or another conversation", async () => {
@@ -509,7 +566,7 @@ describe("messages kept across a reload", () => {
     const fetcher = vi.fn().mockResolvedValueOnce(response({ error: "lost answer", delivered: "unknown" }, 502));
     vi.stubGlobal("fetch", fetcher);
     expect(await sendToSession("m", "s", { text: "keep this uncertainty" })).toBe(false);
-    const id = outbox()["m/s"][0].id, reason = outbox()["m/s"][0].error;
+    const { id, at } = outbox()["m/s"][0], reason = outbox()["m/s"][0].error;
     const saved = () => JSON.parse(store.get(`outbox-msg:m/s/${id}`)!);
     expect(saved()).toMatchObject({ id, state: "failed", inDoubt: true, newId: false, error: reason });
 
@@ -521,10 +578,17 @@ describe("messages kept across a reload", () => {
     fetcher.mockResolvedValueOnce(response({ id, kind: "message", target: { path: "/api/v1/sessions/m/s/messages" }, state: "failed", result: { status: 400, body } }));
     expect(await checkOutbox("m", "s", id)).toBe("not_applied");
     expect(saved()).toMatchObject({ id, state: "failed", inDoubt: false, newId: true, error: "会话已结束" });
+    const older = { id: "older-identical", text: "keep this uncertainty", images: [], ts: new Date(at - 60_000).toISOString() };
+    settleOutbox("m", "s", [older]);
+    expect(outbox()["m/s"][0]).toMatchObject({ id, state: "failed", inDoubt: false, newId: true, error: "会话已结束" });
+    expect(saved()).toMatchObject({ id, state: "failed", inDoubt: false, newId: true });
 
     reload();
     restoreOutbox("m", "s");
     expect(outbox()["m/s"][0]).toMatchObject({ id, state: "failed", restored: true, inDoubt: false, newId: true, error: "会话已结束" });
+    settleOutbox("m", "s", [older]);
+    expect(outbox()["m/s"][0]).toMatchObject({ id, state: "failed", restored: true, inDoubt: false, newId: true, error: "会话已结束" });
+    expect(saved()).toMatchObject({ id, state: "failed", inDoubt: false, newId: true });
     fetcher.mockResolvedValueOnce(response({ ok: true }));
     expect(await retryOutbox("m", "s", id)).toBe(true);
     const retry = fetcher.mock.calls.at(-1)!;
@@ -538,6 +602,18 @@ describe("messages kept across a reload", () => {
     expect(persisted).toMatchObject({ id: retried.id, state: "sent" });
     expect(persisted).not.toHaveProperty("newId");
     expect(persisted).not.toHaveProperty("inDoubt");
+  });
+
+  it("a restored same-id unconfirmed send still settles on a valid current echo", () => {
+    const at = Date.now();
+    keepOutgoing("m/s", entry({ id: "same-id-restored", text: "Continue", at, state: "sending" }));
+    reload();
+    restoreOutbox("m", "s");
+    expect(outbox()["m/s"][0]).toMatchObject({ id: "same-id-restored", state: "failed", restored: true });
+    expect(outbox()["m/s"][0].newId).not.toBe(true);
+    settleOutbox("m", "s", [{ id: "current-copy", text: "Continue", images: [], ts: new Date(at + 1000).toISOString() }]);
+    expect(outbox()["m/s"]).toBeUndefined();
+    expect(store.has("outbox-msg:m/s/same-id-restored")).toBe(false);
   });
 
   it("a message whose send timed out but went in shows as sent, not as failed to send again", () => {

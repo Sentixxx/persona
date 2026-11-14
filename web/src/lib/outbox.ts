@@ -84,9 +84,9 @@ export function arrived(e: Described, users: Seen[]): boolean {
  *  answer wrote the message after the hub stopped waiting), and a failed bubble over a message that went in had the
  *  owner send it again. A refusal (nothing went in) is never settled by words alone.
  *  `users`: the latest user messages and the items the hub tied to a message (taggedSeen). `claimed`: the ones that
- *  already answered one, kept across calls. */
+ *  already answered one, kept across calls. A definite new-id failure never settles by words alone: its Retry must stay. */
 export function settle(list: OutboxEntry[], users: Seen[], now: number, claimed = new Set<string>()): OutboxEntry[] {
-  const shown = echoed(list.filter((e) => e.state !== "failed" || e.restored || e.inDoubt), users, seenAs, claimed);
+  const shown = echoed(list.filter((e) => e.state !== "failed" || (!e.newId && (e.restored || e.inDoubt))), users, seenAs, claimed);
   const tied = new Set(users.flatMap((u) => u.client_msg_id ?? []));
   return list.filter((e) => !shown.has(e) && !(e.state === "failed" && !e.wordsOnly && tied.has(e.id)) && (e.state !== "sent" || now - (e.acceptedAt ?? e.at) < SENT_GRACE_MS));
 }
@@ -377,9 +377,13 @@ interface ClientOperation {
 
 export type OutboxCheck = "applied" | "not_applied" | "unknown" | "stale";
 const checks = new Map<string, Promise<OutboxCheck>>();
+const rechecks = new Map<string, () => void>();
 
 function messageOperation(op: ClientOperation, mid: string, sid: string, id: string): boolean {
-  return op.id?.toLowerCase() === id.toLowerCase() && op.kind === "message" && op.target?.path === `/api/v1${sessionPath(mid, sid)}/messages`;
+  // Go stores r.URL.Path, already decoded once. Compare the raw ids directly: decoding the receipt again would turn a
+  // literal "%2F" in an id into a slash. Also accept the previously encoded form for compatibility.
+  const decoded = `/api/v1/sessions/${mid}/${sid}/messages`, encoded = `/api/v1${sessionPath(mid, sid)}/messages`;
+  return op.id?.toLowerCase() === id.toLowerCase() && op.kind === "message" && (op.target?.path === decoded || op.target?.path === encoded);
 }
 
 /** The original HTTP reason on a definite receipt, without putting the operation's internals in the bubble. */
@@ -403,14 +407,19 @@ function operationFailure(op: ClientOperation): string {
 export function checkOutbox(mid: string, sid: string, id: string, recheck?: () => void): Promise<OutboxCheck> {
   const key = outboxKey(mid, sid), checkKey = `${key}/${id}`;
   const existing = checks.get(checkKey);
-  if (existing) return existing;
+  if (existing) {
+    // Returning to the conversation joins the same read, but its new view owns the transcript refresh.
+    if (recheck) rechecks.set(checkKey, recheck);
+    return existing;
+  }
   const e = list(key).find((x) => x.id === id);
   if (!e || e.state !== "failed" || !e.inDoubt) return Promise.resolve("stale");
+  if (recheck) rechecks.set(checkKey, recheck);
   const token = getToken(), tokenOwner = credentialOwner();
   const current = () => credentialOwner() === tokenOwner && getToken() === token && list(key).find((x) => x.id === id) === e;
   const reread = () => {
     if (!current()) return;
-    try { recheck?.(); } catch {
+    try { rechecks.get(checkKey)?.(); } catch {
       // A view that closed cannot refresh; the next visit still reconciles the same outbox entry.
     }
   };
@@ -444,7 +453,12 @@ export function checkOutbox(mid: string, sid: string, id: string, recheck?: () =
     return "unknown";
   })();
   checks.set(checkKey, run);
-  const forget = () => { if (checks.get(checkKey) === run) checks.delete(checkKey); };
+  const forget = () => {
+    if (checks.get(checkKey) === run) {
+      checks.delete(checkKey);
+      rechecks.delete(checkKey);
+    }
+  };
   void run.then(forget, forget);
   return run;
 }
