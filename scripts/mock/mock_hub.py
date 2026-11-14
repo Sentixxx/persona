@@ -7793,7 +7793,7 @@ if os.environ.get("MOCK_MODEL_CHANGE") == "1":
     )
 if MOCK_CLOSEOUT:  # each agent's last reply ends with the raw closeout block (the not-done one is only the block)
     for _sid, _ask, _cmd in ((CLOSEOUT_DONE, "报表导出一到 50 万行就超时，修一下", "go test ./export/..."),
-                             (CLOSEOUT_DISPROVED, "把支付 SDK 升到 v4", "cd app && npm test"),
+                             (CLOSEOUT_DISPROVED, "把支付 SDK 升到 v4", "cd app; npm test"),
                              (CLOSEOUT_BLOCKED, "把用户表按地区拆开", "./scripts/migrate.sh --env sandbox"),
                              (CLOSEOUT_NOT_DONE, "搜索结果里把命中的词标出来", "npm run build")):
         _first = it("user", "text", 13, text=_ask)

@@ -120,7 +120,7 @@ try {
       if (!(await el.getAttribute("data-closeout-contradicted"))) fail(`${where}: the card of a disproved claim is not marked`);
       const failedRun = await commandEvidence(el, "exit", DISPROVED);
       const failedText = await failedRun.innerText();
-      for (const want of ["cd app && npm test", "Exit code 1", "is_error: true"]) if (!failedText.includes(want)) fail(`${where}: failed command evidence lacks "${want}": ${failedText}`);
+      for (const want of ["cd app; npm test", "Exit code 1", "is_error: true"]) if (!failedText.includes(want)) fail(`${where}: failed command evidence lacks "${want}": ${failedText}`);
       const found = el.locator('[data-closeout-claim="merged"] span').filter({ hasText: "Hub found it isn't merged" }).last();
       if (!(await found.count())) fail(`${where}: the contradicted claim does not say what the hub found`);
       const tone = await found.evaluate((n) => [getComputedStyle(n).color, getComputedStyle(n).backgroundColor, getComputedStyle(document.documentElement).getPropertyValue("--orange").trim()]);

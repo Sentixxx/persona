@@ -19,7 +19,7 @@ const PROSE_MAKE = /^make (?:sure|it|the|a|an|to|sense|this|that|up)(?:\s|$)/i;
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 const DURATION = /^[0-9]+(?:\.[0-9]+)?[smhd]?$/;
 // Extra options are safe only when they cannot narrow the claimed test or package selection. Everything else is left unmatched.
-const SAFE_EXTRA = /^(?:-v+|-q|-race|-cover|-coverprofile=\S+|-count=\d+|-timeout=\S+|-parallel=\d+|-shuffle=\S+|-json|--verbose|--quiet|--watch(?:=\S+)?|--runInBand|--maxWorkers=\d+|--max-workers=\d+|--workers=\d+|--coverage|--ci|--color|--no-color|--silent|--bail(?:=\d+)?|-x|--fail-fast|--no-fail-fast|--show-output|--nocapture|-s)$/;
+const SAFE_EXTRA = /^(?:-v+|-q|-race|-cover|-coverprofile=\S+|-count=[1-9]\d*|-timeout=\S+|-parallel=\d+|-shuffle=\S+|-json|--verbose|--quiet|--watch(?:=\S+)?|--runInBand|--maxWorkers=\d+|--max-workers=\d+|--workers=\d+|--coverage|--ci|--color|--no-color|--silent|--bail(?:=\d+)?|-x|--fail-fast|--no-fail-fast|--show-output|--nocapture|-s)$/;
 const SAFE_CI = /^CI=(?:0|1|true|false)$/i;
 const CONDITIONAL = new Set(["if", "then", "elif", "else", "fi", "case", "for", "while", "until", "select", "do", "done"]);
 
@@ -111,10 +111,17 @@ export function closeoutCommandClaims(verified: string): string[] {
 
 type ShellOutcome = "none" | "zero" | "direct";
 
+interface DirectoryContext {
+  path?: string;
+  outcome: ShellOutcome;
+}
+
 interface CommandPart {
   words: string[];
   /** The static directory in effect for this command; an unscoped claim does not constrain it. */
   directory?: string;
+  /** Whether the recorded result proves that the directory change actually happened. */
+  directoryOutcome: ShellOutcome;
   /** Whether the tool result is this command's result, or proves it only when the whole shell exited zero. */
   outcome: ShellOutcome;
 }
@@ -124,29 +131,42 @@ function nestedOutcome(outer: ShellOutcome, inner: ShellOutcome): ShellOutcome {
   return outer === "direct" ? inner : "zero";
 }
 
+function outcomeProven(outcome: ShellOutcome, exitCode: number | undefined): boolean {
+  return outcome === "direct" || (outcome === "zero" && exitCode === 0);
+}
+
 /** The simple commands of a shell line, retaining directory and outcome context and discarding harmless wrappers. */
-function commandSegments(command: string, depth = 2, inherited?: string): CommandPart[] {
+function commandSegments(command: string, depth = 2, inherited: DirectoryContext = { outcome: "none" }): CommandPart[] {
   const out: CommandPart[] = [];
   let directory = inherited;
+  let shellOptionsChanged = false;
   for (const raw of shellSegments(command)) {
     const words = commandWords(raw.words);
     if (!words.length || CONDITIONAL.has(base(words[0]))) return [];
     const script = shellScript(words);
     if (script !== undefined && depth > 0) {
-      out.push(...commandSegments(script, depth - 1, directory).map((part) => ({ ...part, outcome: nestedOutcome(raw.outcome, part.outcome) })));
+      out.push(...commandSegments(script, depth - 1, directory).map((part) => ({
+        ...part,
+        directoryOutcome: nestedOutcome(raw.outcome, part.directoryOutcome),
+        outcome: nestedOutcome(raw.outcome, part.outcome),
+      })));
       continue;
     }
     if (["pushd", "popd", "dirs"].includes(base(words[0]))) return [];
+    if (["set", "shopt", "setopt", "unsetopt"].includes(base(words[0]))) {
+      shellOptionsChanged = true;
+      continue;
+    }
     if (base(words[0]) === "cd") {
       const target = withoutRedirections(words);
       if (target.length !== 2) return [];
-      directory = target[1];
+      directory = { path: target[1], outcome: raw.outcome };
       continue;
     }
     const simple = withoutRedirections(words);
-    if (simple.length) out.push({ words: simple, directory, outcome: raw.outcome });
+    if (simple.length) out.push({ words: simple, directory: directory.path, directoryOutcome: directory.outcome, outcome: raw.outcome });
   }
-  return out;
+  return shellOptionsChanged ? out.map((part) => ({ ...part, directoryOutcome: "none", outcome: "none" })) : out;
 }
 
 function shellScript(words: string[]): string | undefined {
@@ -306,7 +326,7 @@ function shellSegments(command: string): ShellSegment[] {
   const parsed = segments.map((words) => ({ words, outcome: "none" as ShellOutcome }));
   let trailing = true;
   for (let i = parsed.length - 1; i >= 0 && trailing; i--) {
-    if (i === parsed.length - 1) parsed[i].outcome = "direct";
+    if (i === parsed.length - 1) parsed[i].outcome = joins[i] === "and" ? "zero" : "direct";
     else if (joins[i + 1] === "and") parsed[i].outcome = "zero";
     else trailing = false;
   }
@@ -361,15 +381,20 @@ function samePart(want: CommandPart, got: CommandPart): boolean {
   return (want.directory === undefined || want.directory === got.directory) && sameWords(want.words, got.words);
 }
 
+interface MatchedPart {
+  part: CommandPart;
+  requireDirectory: boolean;
+}
+
 /** Claimed commands run in order; a directory named by the claim must be the directory in effect for the recorded command. */
-function segmentsMatch(claim: CommandPart[], run: CommandPart[]): CommandPart[] | undefined {
+function segmentsMatch(claim: CommandPart[], run: CommandPart[]): MatchedPart[] | undefined {
   if (!claim.length) return undefined;
-  const matched: CommandPart[] = [];
+  const matched: MatchedPart[] = [];
   let at = 0;
   for (const want of claim) {
     while (at < run.length && !samePart(want, run[at])) at++;
     if (at === run.length) return undefined;
-    matched.push(run[at]);
+    matched.push({ part: run[at], requireDirectory: want.directory !== undefined });
     at++;
   }
   return matched;
@@ -402,7 +427,7 @@ export function closeoutCommandEvidence(verified: string, segment: Segment | und
   return claims.map((claim) => {
     const wanted = commandSegments(claim);
     let found: (typeof calls)[number] | undefined;
-    let matched: CommandPart[] | undefined;
+    let matched: MatchedPart[] | undefined;
     for (let i = calls.length - 1; i >= 0; i--) {
       const parts = segmentsMatch(wanted, calls[i].segments);
       if (parts) { found = calls[i]; matched = parts; break; }
@@ -415,7 +440,8 @@ export function closeoutCommandEvidence(verified: string, segment: Segment | und
     const running = last?.status === "running" || last?.status === "waiting";
     const exitCode = numericExit(found.result) ?? (typeof last?.exit_code === "number" && Number.isSafeInteger(last.exit_code) ? last.exit_code : undefined);
     const isError = typeof found.result?.is_error === "boolean" ? found.result.is_error : undefined;
-    const attributed = matched.every((part) => part.outcome === "direct" || (exitCode === 0 && part.outcome === "zero"));
+    const attributed = matched.every(({ part, requireDirectory }) =>
+      outcomeProven(part.outcome, exitCode) && (!requireDirectory || outcomeProven(part.directoryOutcome, exitCode)));
     const common = { claim, command: found.command, exitCode: attributed ? exitCode : undefined, isError: attributed ? isError : undefined, background: background || undefined };
     if (!found.result) return { ...common, state: "unavailable", reason: "no_result" };
     if (!attributed) return { ...common, state: "unavailable" };

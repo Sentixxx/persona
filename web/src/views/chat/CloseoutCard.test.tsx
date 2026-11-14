@@ -55,9 +55,9 @@ afterEach(() => {
 
 describe("CloseoutCard command evidence", () => {
   it("shows the recorded command, numeric exit and error flag without a verification badge", async () => {
-    await draw(exchange("cd web && npm test", { is_error: true, outcome: { status: "failed", exit_code: 1 } }));
+    await draw(exchange("cd web; npm test", { is_error: true, outcome: { status: "failed", exit_code: 1 } }));
     const line = host.querySelector("[data-closeout-command-evidence='exit']");
-    expect(line?.textContent).toContain("cd web && npm test");
+    expect(line?.textContent).toContain("cd web; npm test");
     expect(line?.textContent).toContain(t("chat-chatview.closeout_evidence_exit", { code: 1 }));
     expect(line?.textContent).toContain("is_error");
     expect(host.querySelector("[data-closeout-evidence] .text-green")).toBeNull();

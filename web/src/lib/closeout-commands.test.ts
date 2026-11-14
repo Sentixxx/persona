@@ -59,7 +59,7 @@ describe("closeoutCommandEvidence matching", () => {
     expect(result.exitCode).toBeUndefined();
     expect(result.isError).toBeUndefined();
     const direct = "env -u UNUSED CI=1 timeout 30s bash -lc 'cd web && npm test'";
-    expect(closeoutCommandEvidence("`cd web && npm test`", exchange([{ command: direct, result: { is_error: false } }]))[0]).toMatchObject({ state: "error", command: direct, isError: false });
+    expect(closeoutCommandEvidence("`cd web && npm test`", exchange([{ command: direct, result: { is_error: false, outcome: { status: "ok", exit_code: 0 } } }]))[0]).toMatchObject({ state: "exit", command: direct, exitCode: 0, isError: false });
   });
 
   it("rejects selection-affecting GOFLAGS but keeps a non-narrowing assignment", () => {
@@ -90,6 +90,56 @@ describe("closeoutCommandEvidence matching", () => {
     }
   });
 
+  it("does not attribute a skipped final && command through shell wrappers", () => {
+    for (const command of [
+      "false && go test ./...",
+      "true && false && go test ./...",
+      "bash -lc 'false && go test ./...'",
+      "bash -lc 'bash -c \"false && go test ./...\"'",
+      "timeout 30s bash -lc 'false && go test ./...'",
+    ]) {
+      const result = closeoutCommandEvidence("`go test ./...`", exchange([{ command, result: { is_error: true, outcome: { status: "failed", exit_code: 1 } } }]))[0];
+      expect(result).toMatchObject({ state: "unavailable", command });
+      expect(result.exitCode).toBeUndefined();
+      expect(result.isError).toBeUndefined();
+    }
+  });
+
+  it("keeps direct failures and successful && chains attributable", () => {
+    for (const command of ["go test ./...", "true && go test ./...", "go test ./... && true"]) {
+      const exitCode = command === "go test ./..." ? 1 : 0;
+      const result = closeoutCommandEvidence("`go test ./...`", exchange([{ command, result: { is_error: exitCode !== 0, outcome: { status: "ok", exit_code: exitCode } } }]))[0];
+      expect(result).toMatchObject({ state: "exit", command, exitCode });
+    }
+  });
+
+  it("requires positive Go test counts in arguments and GOFLAGS", () => {
+    for (const command of ["go test ./... -count=0", "GOFLAGS=-count=0 go test ./..."]) {
+      const result = closeoutCommandEvidence("`go test ./...`", exchange([{ command, result: { is_error: false, outcome: { status: "ok", exit_code: 0 } } }]))[0];
+      expect(result).toMatchObject({ state: "not_found" });
+      expect(result.exitCode).toBeUndefined();
+      expect(result.isError).toBeUndefined();
+    }
+    expect(closeoutCommandEvidence("`go test ./...`", exchange([{ command: "go test ./... -count=1", result: { is_error: false, outcome: { status: "ok", exit_code: 0 } } }]))[0]).toMatchObject({ state: "exit", exitCode: 0 });
+  });
+
+  it("fails closed after shell option changes but keeps an ordinary pipeline's last stage", () => {
+    for (const command of [
+      "set -o pipefail; false | go test ./...",
+      "bash -lc 'set -o pipefail; false | go test ./...'",
+      "bash -lc 'false | go test ./...'; set -o pipefail",
+      "shopt -s pipefail; false | go test ./...",
+      "setopt pipefail; false | go test ./...",
+      "unsetopt pipefail; false | go test ./...",
+    ]) {
+      const result = closeoutCommandEvidence("`go test ./...`", exchange([{ command, result: { is_error: true, outcome: { status: "failed", exit_code: 1 } } }]))[0];
+      expect(result).toMatchObject({ state: "unavailable", command });
+      expect(result.exitCode).toBeUndefined();
+      expect(result.isError).toBeUndefined();
+    }
+    expect(closeoutCommandEvidence("`go test ./...`", exchange([{ command: "false | go test ./...", result: { is_error: false, outcome: { status: "ok", exit_code: 0 } } }]))[0]).toMatchObject({ state: "exit", exitCode: 0 });
+  });
+
   it("rejects short-circuited and conditional alternatives, not unconditional separators", () => {
     for (const command of ["true || go test ./...", "if true; then go test ./...; fi"]) {
       const result = closeoutCommandEvidence("`go test ./...`", exchange([{ command, result: { is_error: false, outcome: { status: "ok", exit_code: 0 } } }]))[0];
@@ -113,6 +163,26 @@ describe("closeoutCommandEvidence matching", () => {
     expect(changedByEnv).toMatchObject({ state: "not_found" });
     expect(changedByEnv.exitCode).toBeUndefined();
     expect(closeoutCommandEvidence("`npm test`", exchange([{ command: "cd app && npm test", result: { is_error: false, outcome: { status: "ok", exit_code: 0 } } }]))[0]).toMatchObject({ state: "exit", exitCode: 0 });
+  });
+
+  it("does not let a skipped or failed cd prove a claimed directory", () => {
+    for (const [claim, command] of [
+      ["cd web && npm test", "cd server && false && cd web; npm test"],
+      ["cd /definitely-missing && npm test", "cd server && cd /definitely-missing; npm test"],
+      ["cd web && npm test", "bash -lc 'cd server && false && cd web; npm test'"],
+      ["cd web && npm test", "timeout 30s bash -lc 'cd server && cd /definitely-missing; cd web; npm test'"],
+    ]) {
+      const result = closeoutCommandEvidence(`\`${claim}\``, exchange([{ command, result: { is_error: false, outcome: { status: "ok", exit_code: 0 } } }]))[0];
+      expect(result).toMatchObject({ state: "unavailable", command });
+      expect(result.exitCode).toBeUndefined();
+      expect(result.isError).toBeUndefined();
+    }
+    const unscoped = closeoutCommandEvidence("`npm test`", exchange([{ command: "cd server && false && cd web; npm test", result: { is_error: false, outcome: { status: "ok", exit_code: 0 } } }]))[0];
+    expect(unscoped).toMatchObject({ state: "exit", exitCode: 0 });
+    const wrapped = closeoutCommandEvidence("`cd web && npm test`", exchange([{ command: "bash -lc 'cd web && npm test'", result: { is_error: false, outcome: { status: "ok", exit_code: 0 } } }]))[0];
+    expect(wrapped).toMatchObject({ state: "exit", exitCode: 0 });
+    const failed = closeoutCommandEvidence("`cd web && npm test`", exchange([{ command: "cd web && npm test", result: { is_error: true, outcome: { status: "failed", exit_code: 1 } } }]))[0];
+    expect(failed).toMatchObject({ state: "unavailable", exitCode: undefined, isError: undefined });
   });
 
   it("rejects env directory changes hidden after valued unset options", () => {
