@@ -42,10 +42,18 @@ and `--print-records` prints the validated raw records. Keep the complete generi
 
 `scripts/ci/core.sh` runs all of these, plus formatting and clippy. On Linux, `scripts/test-c-abi.sh` compiles
 `tests/c_abi_smoke.c` as a separate C11 client against the checked-in header, dynamically links it to the exact release
-`libpersona_core.so`, compares the `empty_list` projection and empty-buffer behavior, and checks that the header's
-declared functions have dynamic exports. This proves a real C compiler/linker can consume the C ABI; it is not a Swift
-importer, Apple ABI, NAPI/HAP, physical-device or performance test. Generated inputs and the executable stay under the
-ignored `native/app-core/target/` directory.
+`libpersona_core.so`, and checks that the header's declared functions have dynamic exports. The client replays the
+unchanged fixtures through every pure C projection: sort's `empty_list`, `persona_core_project_answer` and
+`persona_core_display_answer` for all 15 question + 8 recommendation cases (complete conditional expected objects,
+invalid page/option and the U+200B boundaries), `persona_core_project_stream_chunks` for all 21 complete
+`{done, tail}` objects, `persona_core_project_turns` for all 57 static cases with the checked-in current-iOS overlay
+applied by the client (62 complete turn objects across the 54 non-empty cases), and
+`persona_core_project_task_index` for all five complete expected objects plus the background receipt. Expected objects
+are compared completely after a canonical re-serialization (sorted object keys, exact array order and scalars);
+exact-name manifests, malformed-input empty buffers and a deliberately wrong expected object are checked per domain.
+A missing fixture, client source or release library fails rather than skips. This proves a real C compiler/linker can
+consume the C ABI; it is not a Swift importer, Apple ABI, NAPI/HAP, physical-device or performance test. Generated
+inputs and the executable stay under the ignored `native/app-core/target/` directory.
 
 Android's `:core:rustcore` tests build a host copy of
 the library and replay the same continuity, transport, sort and static-turn fixtures through the real JNI binding. The
@@ -102,6 +110,21 @@ schedule cache writes.
 `Rejected` has no chat
 or input identity, so the driver records diagnostics and broadcasts a notification without failing another chat or
 releasing its gates. Bounded native waits and the core's duplicate-fill gate keep later retries possible.
+
+Enable the debug-only shadow with `-PpersonaContinuity=shadow` in JVM tests, or launch `DebugEntryActivity` with
+`--es debug.continuity shadow`, then force-stop and relaunch the app (use `kotlin` to turn it off). Kotlin remains
+authoritative: the shadow serially replays every input on its own background queue, waiting only for its own core,
+created after the first frame. It compares item ids/order, items, covered, history, hasMore, loadedOnce and requests.
+Kotlin's per-step gap/verified and Rust's persistent verification authority are not equivalent fields: cache restores
+and live pushes intentionally differ, covered by a separate real-JNI contract test rather than a second state machine.
+Rust-only acknowledgements and concurrent-fold capability do not change the Kotlin result returned to the repository.
+`PersonaCoreShadow` reports contain only domain, rule and input kind with counts/flags; never items, identifiers, text,
+history or sequence values. Driver-level rejection has its own `rust-rejected` rule, including rejection followed by
+an exception, and never logs the rejection reason through the shadow. Native failure disables only that chat's shadow.
+Neither accept nor close waits for Rust; close preserves queued inputs. After every 10 completed input comparisons,
+and after draining on close, each shadow logs only `compared=<count> mismatches=<count>` to `PersonaCoreShadow`.
+`compared` excludes queued inputs, failed native work and rejections; `mismatches` counts individual rule reports.
+Release source sets contain neither the shadow nor its preferences.
 
 ## Reproducing phase-1 evidence
 
