@@ -25434,28 +25434,6 @@
       },
       "extractionState" : "manual"
     },
-    "Approve" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Approve"
-          }
-        },
-        "ja" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "承認"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "批准"
-          }
-        }
-      }
-    },
     "Approve %@?" : {
       "localizations" : {
         "en" : {
