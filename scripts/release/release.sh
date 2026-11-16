@@ -66,7 +66,7 @@ if strings "$APP/Persona" | grep -qxE '(showRecordingEnd|showWatchNote|pairURL|o
   echo "DEBUG switches found in the Release binary" >&2; exit 1
 fi
 for BINARY in "$APP/Persona" "$WATCH/Persona"; do
-  if [ -f "$BINARY" ] && strings "$BINARY" | grep -xE '(showWatchDashboard|openWatchPage|watchScrollBottom)' >/dev/null; then
+  if [ -f "$BINARY" ] && strings "$BINARY" | grep -xE '(showWatchDashboard|openWatchPage|showWatchScrollBottom)' >/dev/null; then
     echo "DEBUG watch dashboard switches found in the Release binary: $BINARY" >&2; exit 1
   fi
 done

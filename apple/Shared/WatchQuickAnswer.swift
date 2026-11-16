@@ -1,6 +1,23 @@
 import Foundation
 
 nonisolated enum WatchQuickAnswer {
+    static func negativeResolution(for kind: InteractionKind) -> Resolution {
+        switch kind {
+        case .permission: Resolution(allow: false)
+        case .plan: Resolution(approve: false, feedback: String(localized: "Please reconsider this plan."))
+        default: preconditionFailure("Only permission and plan requests have a negative decision")
+        }
+    }
+
+    static func formSummary(_ interaction: Interaction) -> String {
+        for candidate in [interaction.askLine(includeToolName: false), interaction.summary] {
+            if let text = candidate?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
+                return text
+            }
+        }
+        return String(localized: "MCP Request")
+    }
+
     static func requiresPhone(_ interaction: Interaction) -> Bool {
         interaction.requiresInput || interaction.secret == true
     }

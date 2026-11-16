@@ -32,7 +32,56 @@ struct WatchInteractionView: View {
             : String(localized: "This session can't be approved on the watch. Handle it on the computer.")
     }
 
+    /// Permission and plan requests end in a decision. At standard text sizes it stays under the scrolling text, never
+    /// over it; at accessibility sizes it scrolls with the text.
+    private var decides: Bool {
+        (interaction.kind == .permission || interaction.kind == .plan)
+            && !WatchQuickAnswer.requiresPhone(interaction) && model.canAnswer(interaction)
+    }
+
+    /// Several questions, or one with several picks, page with Previous / Next / Submit, kept under the text like a
+    /// decision.
+    private var pages: Bool {
+        interaction.kind == .question && !WatchQuickAnswer.requiresPhone(interaction)
+            && (questions.count > 1 || questions.first?.multiSelect == true)
+    }
+
     var body: some View {
+        Group {
+            if (decides || pages) && !textSize.isAccessibilitySize {
+                VStack(spacing: Theme.Space.s) {
+                    page.watchBottomFade()
+                    if decides {
+                        WatchDecisionControl(kind: interaction.kind, shape: .ring, resolve: act).disabled(!canAct)
+                    } else {
+                        HStack(spacing: Theme.Space.sm) { questionNavigation }.font(Theme.Font.captionStrong)
+                    }
+                }
+                .padding(.bottom, Theme.Space.s)
+                .ignoresSafeArea(.container, edges: .bottom)
+            } else {
+                page
+            }
+        }
+        .navigationTitle(textSize.isAccessibilitySize ? "" : interaction.kind.watchTitle)
+        .task(id: interaction.plan) {
+            let raw = interaction.plan ?? ""
+            let prepared = await Task.detached { WatchText.shown(raw) }.value
+            guard !Task.isCancelled else { return }
+            planText = prepared
+        }
+        .task(id: interaction.dialog) {
+            terminalOptions = interaction.dialog?.options.filter { $0.kind == nil } ?? []
+            terminalPicks = Set(terminalOptions.filter { $0.checked == true }.map(\.key))
+        }
+        .onChange(of: interaction.questions) {
+            questionIndex = 0
+            picks = [:]
+            triedEarly = false
+        }
+    }
+
+    private var page: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Theme.Watch.blockSpacing) {
                 if textSize.isAccessibilitySize {
@@ -60,33 +109,12 @@ struct WatchInteractionView: View {
         .watchSnapshotScroll()
         .buttonStyle(.bordered)
         .tint(Theme.primaryText)
-        .navigationTitle(textSize.isAccessibilitySize ? "" : interaction.kind.watchTitle)
-        .toolbar {
-            ToolbarItem(placement: .bottomBar) {
-                if !textSize.isAccessibilitySize { actions.font(Theme.Font.captionStrong) }
-            }
-        }
-        .task(id: interaction.plan) {
-            let raw = interaction.plan ?? ""
-            let prepared = await Task.detached { WatchText.shown(raw) }.value
-            guard !Task.isCancelled else { return }
-            planText = prepared
-        }
-        .task(id: interaction.dialog) {
-            terminalOptions = interaction.dialog?.options.filter { $0.kind == nil } ?? []
-            terminalPicks = Set(terminalOptions.filter { $0.checked == true }.map(\.key))
-        }
-        .onChange(of: interaction.questions) {
-            questionIndex = 0
-            picks = [:]
-            triedEarly = false
-        }
     }
 
     @ViewBuilder private var actions: some View {
         if !WatchQuickAnswer.requiresPhone(interaction) {
             if interaction.kind == .permission || interaction.kind == .plan {
-                WatchDecisionButtons(kind: interaction.kind, resolve: act).disabled(!canAct)
+                WatchDecisionControl(kind: interaction.kind, shape: .ring, resolve: act).disabled(!canAct)
             } else if interaction.kind == .question, !questions.isEmpty {
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: Theme.Space.sm) { questionNavigation }
@@ -101,19 +129,30 @@ struct WatchInteractionView: View {
         case .question:
             questionPage
         case .plan:
+            sessionLine
             WatchExpandableText(text: planText)
         case .permission:
-            if let tool = interaction.toolDisplayName {
-                Text(tool).font(Theme.Font.heading)
+            VStack(alignment: .leading, spacing: Theme.Space.xxs) {
+                Text(interaction.toolDisplayName ?? interaction.summary ?? interaction.watchSummary)
+                    .font(Theme.Watch.subject).fixedSize(horizontal: false, vertical: true)
+                sessionLine
             }
-            WatchExpandableText(text: interaction.summary ?? "", font: Theme.Font.code)
+            if interaction.toolDisplayName != nil, let summary = interaction.summary, !summary.isEmpty {
+                WatchExpandableText(text: summary, font: Theme.Font.code)
+            }
             if let reason = interaction.reason, !reason.isEmpty {
-                WatchExpandableText(text: reason)
+                WatchExpandableText(text: reason, font: Theme.Font.caption).foregroundStyle(.secondary)
             }
         case .screen:
             terminalPage
         case .elicitation:
             WatchPhoneAnswerNotice()
+        }
+    }
+
+    @ViewBuilder private var sessionLine: some View {
+        if let title = interaction.sessionTitle, !title.isEmpty {
+            Text(title).font(Theme.Watch.tag).foregroundStyle(.secondary).lineLimit(1)
         }
     }
 

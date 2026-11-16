@@ -5,7 +5,7 @@ import PersonaWire
 extension View {
     @ViewBuilder func watchSnapshotScroll() -> some View {
         #if DEBUG
-        defaultScrollAnchor(UserDefaults.standard.bool(forKey: "watchScrollBottom") ? .bottom : .top)
+        defaultScrollAnchor(UserDefaults.standard.bool(forKey: "showWatchScrollBottom") ? .bottom : .top)
         #else
         self
         #endif
@@ -60,7 +60,7 @@ extension Interaction {
             (isSecretRun ? [summary] : [toolName, summary]).compactMap { $0 }
                 .joined(separator: String(localized: ": ", comment: "Separator between a label and its value"))
         case .screen: String(localized: "A dialog is open in the terminal")
-        case .elicitation: askLine(includeToolName: false) ?? ""
+        case .elicitation: WatchQuickAnswer.formSummary(self)
         }
     }
 }

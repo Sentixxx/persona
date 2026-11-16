@@ -509,6 +509,48 @@ nonisolated enum Theme {
         static let petSize: CGFloat = 144
         /// The Milk Frog's round face on the list's row.
         static let petFaceSize: CGFloat = 40
+
+        // The dashboard's ring language (#8864 visual review, Activity-like): a ring of what is waiting, one colour per
+        // kind, rounded figures, and hold to confirm. Watch only; the phone never draws these.
+        /// Approvals (permission and plan requests): their arc, tag and legend figure.
+        static let approvalTint = Color.orange
+        /// Questions (question, terminal and form requests).
+        static let questionTint = Color.cyan
+        /// Inbox messages that need an action.
+        static let messageTint = Color.green
+        /// Hold to confirm: the arc that fills and the check.
+        static let confirmTint = Color.green
+        /// Behind a confirm control before it fills (the tint at this opacity).
+        static let confirmWash = 0.22
+        /// A ring's empty track and the round Deny button's fill.
+        static let ringTrack = Color.white.opacity(0.14)
+        /// The count ring at the default text size; it grows with the text up to `ringMaxDiameter`.
+        static let ringDiameter: CGFloat = 70
+        static let ringMaxDiameter: CGFloat = 112
+        static let ringStroke: CGFloat = 9
+        /// Between two arcs of the count ring, as a fraction of the circle.
+        static let ringGap = 0.035
+        /// The detail page's hold ring and its stroke.
+        static let holdDiameter: CGFloat = 60
+        /// Beside the hold ring: room for "Hold to approve" on two lines in every language.
+        static let hintWidth: CGFloat = 56
+        static let holdStroke: CGFloat = 8
+        /// How long a press must last to confirm; letting go earlier empties the ring.
+        static let holdDuration: TimeInterval = 0.8
+        static let holdRelease = Animation.easeOut(duration: 0.2)
+        /// A running session's progress ring on its row.
+        static let progressRing: CGFloat = 28
+        static let progressStroke: CGFloat = 4
+        /// Where scrolling text fades out above a pinned control.
+        static let fadeHeight: CGFloat = 12
+        /// The smallest a count may shrink to stay inside its ring.
+        static let figureMinScale: CGFloat = 0.5
+        static let ringFigure = SwiftUI.Font.system(.title, design: .rounded).weight(.bold)
+        static let legendFigure = SwiftUI.Font.system(.body, design: .rounded).weight(.semibold)
+        /// What the page is about: the next request's words.
+        static let subject = SwiftUI.Font.system(.title3, design: .rounded).weight(.semibold)
+        /// Kind tags, legend words and hints.
+        static let tag = SwiftUI.Font.system(.caption2, design: .rounded).weight(.bold)
     }
 
     /// Sizes of what is drawn next to text, at the default text size. Use them with `scaledFrame` so they follow

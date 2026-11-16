@@ -13,8 +13,8 @@ struct WatchQuickAnswerView: View {
             } else if model.canAnswer(interaction) {
                 switch interaction.kind {
                 case .permission, .plan:
-                    WatchDecisionButtons(kind: interaction.kind, resolve: act)
-                    .disabled(submitting || model.answering.contains(interaction.uid))
+                    WatchDecisionControl(kind: interaction.kind, shape: .capsule, resolve: act)
+                        .disabled(submitting || model.answering.contains(interaction.uid))
                 case .question:
                     if let question = WatchQuickAnswer.simpleQuestion(interaction) {
                         ForEach(question.options, id: \.label) { option in
@@ -54,52 +54,6 @@ struct WatchQuickAnswerView: View {
         Task {
             await model.resolve(interaction, resolution)
             submitting = false
-        }
-    }
-}
-
-struct WatchDecisionButtons: View {
-    var kind: InteractionKind
-    var resolve: (Resolution) -> Void
-    @Environment(\.dynamicTypeSize) private var textSize
-
-    var body: some View {
-        ViewThatFits(in: .horizontal) {
-            if !textSize.isAccessibilitySize {
-                HStack(spacing: Theme.Space.sm) { buttons }
-            }
-            VStack(spacing: Theme.Space.sm) { buttons }
-        }
-    }
-
-    @ViewBuilder private var buttons: some View {
-        switch kind {
-        case .permission:
-            Button { resolve(Resolution(allow: false)) } label: {
-                Text("Deny").fixedSize().frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.bordered)
-            .frame(minHeight: Theme.Watch.minRowHeight)
-            Button { resolve(Resolution(allow: true)) } label: {
-                Text("Allow [Notification Actions ce7ef2]").fixedSize().frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent).tint(Theme.accent)
-            .foregroundStyle(Theme.onSolid)
-            .frame(minHeight: Theme.Watch.minRowHeight)
-        case .plan:
-            Button { resolve(Resolution(approve: false, feedback: String(localized: "Please reconsider this plan."))) } label: {
-                Text("Revise [Watch Plan]").fixedSize().frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.bordered)
-            .frame(minHeight: Theme.Watch.minRowHeight)
-            Button { resolve(Resolution(approve: true, mode: "acceptEdits")) } label: {
-                Text("Approve").fixedSize().frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent).tint(Theme.accent)
-            .foregroundStyle(Theme.onSolid)
-            .frame(minHeight: Theme.Watch.minRowHeight)
-        default:
-            EmptyView()
         }
     }
 }
@@ -151,17 +105,32 @@ struct WatchExpandableText: View {
     var text: String
     var font = Theme.Font.body
     @State private var expanded = false
+    @State private var collapsedHeight: CGFloat = 0
+    @State private var fullHeight: CGFloat = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Watch.lineSpacing) {
             Text(text).font(font).lineLimit(expanded ? nil : 8)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            if !text.isEmpty {
+                .background(alignment: .topLeading) {
+                    VStack(spacing: Theme.Space.flush) {
+                        Text(text).font(font).lineLimit(8)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { collapsedHeight = $0 }
+                        Text(text).font(font)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { fullHeight = $0 }
+                    }
+                    .hidden()
+                    .accessibilityHidden(true)
+                }
+            if expanded || fullHeight > collapsedHeight {
                 Button { expanded.toggle() } label: {
                     if expanded { Text("Show less") } else { Text("Show all") }
                 }
                 .font(Theme.Font.caption)
             }
         }
+        .onChange(of: text) { expanded = false }
     }
 }

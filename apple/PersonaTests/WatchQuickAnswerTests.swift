@@ -1,7 +1,31 @@
+import Foundation
 import Testing
 @testable import Persona
 
 struct WatchQuickAnswerTests {
+    @Test func planRevisionSharesFeedbackAcrossVisibleAndSwipeActions() {
+        #expect(WatchQuickAnswer.negativeResolution(for: .plan) == Resolution(
+            approve: false, feedback: String(localized: "Please reconsider this plan.")))
+        #expect(WatchQuickAnswer.negativeResolution(for: .permission) == Resolution(allow: false))
+    }
+
+    @Test func formSummaryPrefersRequestMessageThenSummary() {
+        var request = Interaction(id: "form", machineID: "machine", sessionID: "session", kind: .elicitation)
+        request.summary = "  More information is needed  "
+        #expect(WatchQuickAnswer.formSummary(request) == "More information is needed")
+        request.elicitation = ElicitationRequest(mode: "form", message: " Choose a destination ")
+        #expect(WatchQuickAnswer.formSummary(request) == "Choose a destination")
+        request.elicitation?.message = " \n "
+        #expect(WatchQuickAnswer.formSummary(request) == "More information is needed")
+    }
+
+    @Test(arguments: [nil, "", " \n "] as [String?])
+    func emptyFormSummaryFallsBackToLocalizedTitle(summary: String?) {
+        var request = Interaction(id: "form", machineID: "machine", sessionID: "session", kind: .elicitation)
+        request.summary = summary
+        #expect(WatchQuickAnswer.formSummary(request) == String(localized: "MCP Request"))
+    }
+
     private func question(_ text: String = "Choose a destination", multiSelect: Bool = false,
                           labels: [String] = ["Preview (Recommended)", "Production"]) -> Question {
         Question(question: text, header: "Destination", multiSelect: multiSelect,

@@ -47,12 +47,12 @@ struct WatchRootView: View {
                                 }
                                 content(page)
                             }
-                                .containerBackground(model.dashboard.needsYou > 0 ? StatusPalette.needsYou.tint : Theme.Watch.cardFill, for: .tabView)
+                                .containerBackground(Color.black, for: .tabView)
                                 .tag(page)
                         }
                     }
                     .tabViewStyle(.verticalPage)
-                    .navigationTitle(textSize.isAccessibilitySize ? "" : selected.title)
+                    .navigationTitle(textSize.isAccessibilitySize || selected == .glance ? "" : selected.title)
                     .navigationDestination(for: WatchNavigation.Destination.self) { destination($0) }
                     .toolbar {
                         ToolbarItem(placement: .topBarLeading) {
@@ -60,14 +60,15 @@ struct WatchRootView: View {
                                 if model.error != nil || !model.groupFailures.isEmpty || !model.missing.isEmpty
                                     || model.lastUpdate.map({ context.date.timeIntervalSince($0) >= Theme.Watch.staleAfter }) == true {
                                     Button { Task { await model.refresh() } } label: { Theme.Icon.image(Theme.Icon.offline) }
-                                        .foregroundStyle(Theme.cautionText)
+                                        .foregroundStyle(Theme.onSolid)
                                         .accessibilityLabel(String(localized: "Retry [Components b8784c]"))
                                 }
                             }
                         }
                         ToolbarItem(placement: .topBarTrailing) {
                             Button { recordingOpen = true } label: { Theme.Icon.image(Theme.Icon.dictate) }
-                                .foregroundStyle(Theme.onSolid)
+                                .buttonStyle(.plain)
+                                .foregroundStyle(.secondary)
                                 .accessibilityLabel(String(localized: "Record [Watch Dashboard]"))
                         }
                     }
@@ -221,30 +222,65 @@ struct WatchRootView: View {
     }
 }
 
+/// What needs you, at a glance: the count ring, the next request with its answer, and how many agents are working.
+/// With fresh data and a permission or plan request next, at standard text sizes, the page is one fixed screen:
+/// ring, request, decision. A raised wrist sees what is next and can answer without scrolling; the request's words
+/// shorten to fit. Otherwise the page scrolls and the answer follows the request.
 private struct WatchGlanceView: View {
     @Environment(WatchModel.self) private var model
+    @Environment(\.dynamicTypeSize) private var textSize
     var selected: (WatchPage) -> Void
+    @State private var submitting = false
+
+    private var pinned: Interaction? {
+        guard !textSize.isAccessibilitySize, model.isFresh, let request = model.dashboard.nextUp,
+              request.kind == .permission || request.kind == .plan,
+              !WatchQuickAnswer.requiresPhone(request), model.canAnswer(request) else { return nil }
+        return request
+    }
 
     var body: some View {
+        if let request = pinned {
+            VStack(alignment: .leading, spacing: Theme.Space.s) {
+                Button { selected(.queue) } label: { WatchCountSummary(dashboard: model.dashboard) }
+                    .buttonStyle(.plain)
+                NavigationLink(value: WatchNavigation.Destination.interaction(group: request.group, id: request.id)) {
+                    VStack(alignment: .leading, spacing: Theme.Space.xxs) {
+                        Label(request.kind.watchTitle, systemImage: request.kind.watchSymbol)
+                            .font(Theme.Watch.tag).foregroundStyle(request.kind.watchTint).lineLimit(1)
+                        Text(request.watchSummary).font(Theme.Watch.subject).lineLimit(2)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .watchOpenGesture()
+                if let error = model.answerErrors[request.uid] {
+                    Text(error).font(Theme.Watch.tag).foregroundStyle(Theme.cautionText).lineLimit(2)
+                }
+                Spacer(minLength: Theme.Space.flush)
+                WatchDecisionControl(kind: request.kind, shape: .capsule) { resolve(request, $0) }
+                    .disabled(submitting || model.answering.contains(request.uid))
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .padding(.horizontal, Theme.Space.xs)
+            .padding(.bottom, Theme.Space.s)
+            .ignoresSafeArea(.container, edges: .bottom)
+        } else {
+            scroll
+        }
+    }
+
+    private var scroll: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: Theme.Watch.lineSpacing) {
+            VStack(alignment: .leading, spacing: Theme.Space.s) {
                 if !model.isFresh { WatchFreshnessView() }
                 if model.lastUpdate != nil {
-                    Button { selected(.queue) } label: {
-                        VStack(spacing: Theme.Watch.lineSpacing) {
-                            WatchCountHeader(count: model.dashboard.needsYou)
-                            HStack(spacing: Theme.Watch.lineSpacing) {
-                                WatchCountTile(count: model.dashboard.approvals, kind: .approvals)
-                                WatchCountTile(count: model.dashboard.questions, kind: .questions)
-                                WatchCountTile(count: model.dashboard.messages, kind: .messages)
-                            }
-                        }
-                    }
-                    .buttonStyle(.plain)
+                    Button { selected(.queue) } label: { WatchCountSummary(dashboard: model.dashboard) }
+                        .buttonStyle(.plain)
                     if let request = model.dashboard.nextUp {
                         NavigationLink(value: WatchNavigation.Destination.interaction(group: request.group, id: request.id)) {
-                            Text(request.watchSummary).font(Theme.Font.heading).lineLimit(2)
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                            WatchRequestSubject(request: request, lineLimit: 3).contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                         .watchOpenGesture()
@@ -252,78 +288,55 @@ private struct WatchGlanceView: View {
                     } else if model.isFresh {
                         Text(model.dashboard.needsYou == 0 ? String(localized: "All caught up [Watch Dashboard]")
                              : String(localized: "Open Needs You to continue [Watch Dashboard]"))
-                            .font(Theme.Font.caption).foregroundStyle(.secondary)
+                            .font(Theme.Watch.subject)
                     }
                     Button { selected(.running) } label: {
                         Label(StateName.count(.working, model.dashboard.working), systemImage: Theme.Icon.run)
-                            .font(Theme.Font.caption).lineLimit(1)
+                            .font(Theme.Watch.tag).foregroundStyle(.secondary).lineLimit(1)
+                            .frame(maxWidth: .infinity, minHeight: Theme.Watch.minRowHeight, alignment: .leading)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .frame(minHeight: Theme.Watch.minRowHeight)
                 }
             }
-            .padding(.horizontal, Theme.Space.s)
+            .padding(.horizontal, Theme.Space.xs)
         }
         .watchSnapshotScroll()
     }
-}
 
-struct WatchCountHeader: View {
-    var count: Int
-    var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: Theme.Space.s) {
-            Text(count > Theme.Watch.countLimit ? "99+" : String(count)).font(Theme.Font.title).monospacedDigit()
-            Text(StateName.needsYou.text).font(Theme.Font.caption)
-            Spacer(minLength: Theme.Space.flush)
-            Theme.Icon.image(Theme.Icon.disclosure).font(Theme.Font.label)
+    private func resolve(_ request: Interaction, _ resolution: Resolution) {
+        guard !submitting, !model.answering.contains(request.uid), model.canAnswer(request) else { return }
+        submitting = true
+        Task {
+            await model.resolve(request, resolution)
+            submitting = false
         }
-        .foregroundStyle(Theme.needsYou)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(StateName.count(.needsYou, count))
     }
 }
 
-struct WatchCountTile: View {
-    enum Kind {
-        case approvals, questions, messages
-        var title: String {
-            switch self {
-            case .approvals: String(localized: "Approvals [Watch Dashboard]")
-            case .questions: String(localized: "Questions [Watch Dashboard]")
-            case .messages: String(localized: "Messages [Watch Dashboard]")
-            }
-        }
-        var symbol: String {
-            switch self {
-            case .approvals: Theme.Icon.askFirst
-            case .questions: Theme.Icon.question
-            case .messages: Theme.Icon.inbox
-            }
-        }
-        func spoken(_ count: Int) -> String {
-            switch self {
-            case .approvals: String(localized: "\(count) approval requests [Watch Dashboard]")
-            case .questions: String(localized: "\(count) question requests [Watch Dashboard]")
-            case .messages: String(localized: "\(count) messages needing you [Watch Dashboard]")
-            }
+/// Approvals, questions and messages: their names and what VoiceOver says for a count.
+enum WatchCountKind {
+    case approvals, questions, messages
+    var title: String {
+        switch self {
+        case .approvals: String(localized: "Approvals [Watch Dashboard]")
+        case .questions: String(localized: "Questions [Watch Dashboard]")
+        case .messages: String(localized: "Messages [Watch Dashboard]")
         }
     }
-    var count: Int
-    var kind: Kind
-    var body: some View {
-        VStack(spacing: Theme.Space.flush) {
-            Text(kind.title).font(Theme.Font.label)
-            HStack(spacing: Theme.Watch.lineSpacing) {
-                Theme.Icon.image(kind.symbol)
-                Text(count > Theme.Watch.countLimit ? "99+" : String(count)).monospacedDigit()
-            }
-            .font(Theme.Font.captionStrong)
+    var symbol: String {
+        switch self {
+        case .approvals: Theme.Icon.askFirst
+        case .questions: Theme.Icon.question
+        case .messages: Theme.Icon.inbox
         }
-        .padding(.vertical, Theme.Space.xs)
-        .frame(maxWidth: .infinity)
-        .background(Theme.Watch.cardFill, in: RoundedRectangle(cornerRadius: Theme.Watch.cardRadius))
-        .opacity(count == 0 ? Theme.Watch.quietOpacity : 1)
-        .accessibilityLabel(kind.spoken(count))
+    }
+    func spoken(_ count: Int) -> String {
+        switch self {
+        case .approvals: String(localized: "\(count) approval requests [Watch Dashboard]")
+        case .questions: String(localized: "\(count) question requests [Watch Dashboard]")
+        case .messages: String(localized: "\(count) messages needing you [Watch Dashboard]")
+        }
     }
 }
 
@@ -369,7 +382,7 @@ private struct WatchQueueView: View {
                         NavigationLink(value: WatchNavigation.Destination.interaction(group: request.group, id: request.id)) {
                             VStack(alignment: .leading, spacing: Theme.Watch.lineSpacing) {
                                 Label(request.kind.watchTitle, systemImage: request.kind.watchSymbol)
-                                    .font(Theme.Font.caption).foregroundStyle(Theme.needsYou)
+                                    .font(Theme.Watch.tag).foregroundStyle(request.kind.watchTint)
                                 Text(request.watchSummary).font(Theme.Font.heading)
                                 if let error = model.answerErrors[request.uid] {
                                     Text(error).font(Theme.Font.caption).foregroundStyle(Theme.danger)
@@ -381,9 +394,13 @@ private struct WatchQueueView: View {
                             if (request.kind == .permission || request.kind == .plan), !request.requiresInput,
                                request.secret != true, model.canAnswer(request) {
                                 Button(role: .destructive) {
-                                    Task { await model.resolve(request, request.kind == .plan ? Resolution(approve: false) : Resolution(allow: false)) }
+                                    Task { await model.resolve(request, WatchQuickAnswer.negativeResolution(for: request.kind)) }
                                 } label: {
-                                    Text("Deny [Interaction Views 84c4f6]").lineLimit(1)
+                                    if request.kind == .plan {
+                                        Text("Revise [Watch Plan]").lineLimit(1)
+                                    } else {
+                                        Text("Deny [Interaction Views 84c4f6]").lineLimit(1)
+                                    }
                                 }
                             }
                         }
@@ -417,10 +434,17 @@ private struct WatchRunningView: View {
             if !model.isFresh { WatchFreshnessView() }
             ForEach(model.dashboard.running) { running in
                 NavigationLink(value: WatchNavigation.Destination.session(running.session.key)) {
-                    VStack(alignment: .leading, spacing: Theme.Watch.lineSpacing) {
-                        WatchTitle(session: running.session)
-                        Text(running.session.stateLabel).font(Theme.Font.caption).foregroundStyle(running.session.stateTone.text)
-                        if let progress = running.progress { WatchProgressBar(done: progress.done, started: progress.started) }
+                    HStack(spacing: Theme.Space.s) {
+                        VStack(alignment: .leading, spacing: Theme.Watch.lineSpacing) {
+                            WatchTitle(session: running.session)
+                            Text(running.session.stateLabel).font(Theme.Font.caption).foregroundStyle(running.session.stateTone.text)
+                            if let progress = running.progress {
+                                Text("\(progress.done) of \(progress.started) done [Watch Dashboard]")
+                                    .font(Theme.Watch.tag).foregroundStyle(.secondary).accessibilityHidden(true)
+                            }
+                        }
+                        Spacer(minLength: Theme.Space.flush)
+                        if let progress = running.progress { WatchProgressRing(done: progress.done, started: progress.started) }
                     }
                 }.watchCard()
             }
@@ -429,24 +453,5 @@ private struct WatchRunningView: View {
             }
         }
         .refreshable { await model.refresh() }
-    }
-}
-
-struct WatchProgressBar: View {
-    var done: Int
-    var started: Int
-    var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Watch.lineSpacing) {
-            Text("\(done) of \(started) done [Watch Dashboard]").font(Theme.Font.caption).foregroundStyle(.secondary)
-            GeometryReader { geometry in
-                Capsule().fill(Theme.Watch.progressTrack)
-                    .overlay(alignment: .leading) {
-                        Capsule().fill(StatusPalette.working.dot)
-                            .frame(width: geometry.size.width * Double(done) / Double(max(started, 1)))
-                    }
-            }
-            .frame(height: Theme.Watch.progressHeight)
-        }
-        .accessibilityElement(children: .combine)
     }
 }
