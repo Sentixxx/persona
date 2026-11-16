@@ -42,6 +42,7 @@ struct WatchInboxItemView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Theme.Watch.blockSpacing) {
+                Text(item.title).font(Theme.Font.heading).fixedSize(horizontal: false, vertical: true)
                 if let s = item.summary, !s.isEmpty {
                     Text(s).font(Theme.Font.heading)
                 }
@@ -102,7 +103,7 @@ struct WatchInboxItemView: View {
             }
         }
         .watchSnapshotScroll()
-        .navigationTitle(item.title)
+        .navigationTitle("")
         .onAppear { if draft == nil { draft = item.agentDraft } } // the AI twin's, ready to send
     }
 }

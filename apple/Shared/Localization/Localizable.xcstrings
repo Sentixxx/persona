@@ -1,6 +1,22 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Revise [Watch Plan]" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Revise" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "退回" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "差し戻す" } }
+      }
+    },
+    "On computer [Watch Request]" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "On computer" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "电脑处理" } },
+        "ja" : { "stringUnit" : { "state" : "translated", "value" : "PCで対応" } }
+      }
+    },
   "Another group [Watch Dashboard]": {
       "extractionState": "manual",
       "localizations": {

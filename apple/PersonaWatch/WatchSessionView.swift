@@ -31,6 +31,7 @@ struct WatchSessionView: View {
         let active = phase == .active
         ScrollView {
             VStack(alignment: .leading, spacing: Theme.Watch.blockSpacing) {
+                Text(session.displayTitle).font(Theme.Font.heading).fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: Theme.Space.sm) {
                     Circle().fill(session.stateTone.dot).frame(width: Theme.Size.dotS, height: Theme.Size.dotS)
                     Text(session.stateLabel).font(Theme.Font.labelStrong).foregroundStyle(session.stateTone.text)
@@ -118,7 +119,7 @@ struct WatchSessionView: View {
             }
         }
         .watchSnapshotScroll()
-        .navigationTitle(session.displayTitle)
+        .navigationTitle("")
         .task {
             try? await model.api(session.group)?.post("/api/v1/sessions/\(session.machineID)/\(session.sessionID)/seen")
         }

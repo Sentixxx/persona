@@ -50,7 +50,8 @@ struct WatchInteractionView: View {
                     if submitting { ProgressView() }
                     content
                     if textSize.isAccessibilitySize { actions }
-                    Button("Handle on Computer") { act(.dismissed) }
+                    Button("On computer [Watch Request]") { act(.dismissed) }
+                        .lineLimit(1)
                         .font(Theme.Font.caption).foregroundStyle(.secondary)
                         .disabled(!canAct)
                 }
@@ -62,7 +63,7 @@ struct WatchInteractionView: View {
         .navigationTitle(textSize.isAccessibilitySize ? "" : interaction.kind.watchTitle)
         .toolbar {
             ToolbarItem(placement: .bottomBar) {
-                if !textSize.isAccessibilitySize { actions }
+                if !textSize.isAccessibilitySize { actions.font(Theme.Font.captionStrong) }
             }
         }
         .task(id: interaction.plan) {
@@ -141,7 +142,8 @@ struct WatchInteractionView: View {
 
     @ViewBuilder private var questionNavigation: some View {
         if questionIndex > 0 {
-            Button("Previous") { questionIndex -= 1 }.disabled(submitting)
+            Button("Previous") { questionIndex -= 1 }
+                .foregroundStyle(Theme.onSolid).disabled(submitting)
         }
         if questionIndex + 1 < questions.count {
             Button("Next [Interaction Views f82c68]") {
@@ -153,10 +155,12 @@ struct WatchInteractionView: View {
                 questionIndex += 1
                 triedEarly = false
             }
+            .foregroundStyle(Theme.onSolid)
             .disabled(!canAct)
         } else if questions.count > 1 || questions.first?.multiSelect == true {
             Button("Submit") { submit() }
                 .buttonStyle(.borderedProminent).tint(Theme.accent)
+                .foregroundStyle(Theme.onSolid)
                 .disabled(!canAct)
         }
     }
@@ -188,6 +192,7 @@ struct WatchInteractionView: View {
                     act(Resolution(options: terminalOptions.map(\.key).filter(terminalPicks.contains)))
                 }
                 .buttonStyle(.borderedProminent).tint(Theme.accent)
+                .foregroundStyle(Theme.onSolid)
                 .disabled(!canAct || terminalPicks.isEmpty)
             }
         } else {

@@ -288,6 +288,7 @@ Every maintained doc under `docs/` (lessons excluded) must be listed here.
 
 | Area | Docs |
 | --- | --- |
+| Apple Watch evidence | `docs/apple/screenshots/watch-dashboard-phase-a/README.md` Phase A screenshot matrix and validation boundaries |
 | Super rules | `docs/SUPER_RULES.md` highest-priority rules and prior administrator approval for changes |
 | Start | `docs/README.md` navigation · `docs/operations/getting-started.md` setup without a terminal · `docs/assistant/onboarding.md` new-user onboarding · `docs/operations/config.md` config.json and hub.json · `docs/operations/collaboration.md` claims, PRs, templates · `docs/protocol/i18n.md` localization |
 | Architecture and protocol | `docs/server/architecture.md` · `docs/protocol/protocol.md` HTTP / WebSocket API and node RPC · `docs/protocol/file-transfer.md` receive folder and computer to computer transfers · `docs/protocol/agent-states.md` · `docs/protocol/multi-hub.md` one device, several hubs · `docs/protocol/connector-protocol.md` · `docs/protocol/rolling-upgrade-compatibility.md` old / new name interop · `docs/operations/rename.md` naming contract · `docs/operations/persona-cutover.md` approval-gated naming cutover tool |

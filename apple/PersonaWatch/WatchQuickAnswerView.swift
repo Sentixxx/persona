@@ -84,10 +84,11 @@ struct WatchDecisionButtons: View {
                 Text("Allow [Notification Actions ce7ef2]").fixedSize().frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent).tint(Theme.accent)
+            .foregroundStyle(Theme.onSolid)
             .frame(minHeight: Theme.Watch.minRowHeight)
         case .plan:
             Button { resolve(Resolution(approve: false, feedback: String(localized: "Please reconsider this plan."))) } label: {
-                Text("Send Back [Notification Actions a20f13]").fixedSize().frame(maxWidth: .infinity)
+                Text("Revise [Watch Plan]").fixedSize().frame(maxWidth: .infinity)
             }
             .buttonStyle(.bordered)
             .frame(minHeight: Theme.Watch.minRowHeight)
@@ -95,6 +96,7 @@ struct WatchDecisionButtons: View {
                 Text("Approve").fixedSize().frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent).tint(Theme.accent)
+            .foregroundStyle(Theme.onSolid)
             .frame(minHeight: Theme.Watch.minRowHeight)
         default:
             EmptyView()

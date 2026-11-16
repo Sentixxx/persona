@@ -228,7 +228,7 @@ private struct WatchGlanceView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Theme.Watch.lineSpacing) {
-                WatchFreshnessView()
+                if !model.isFresh { WatchFreshnessView() }
                 if model.lastUpdate != nil {
                     Button { selected(.queue) } label: {
                         VStack(spacing: Theme.Watch.lineSpacing) {
@@ -331,10 +331,9 @@ private struct WatchFreshnessView: View {
     @Environment(WatchModel.self) private var model
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Watch.lineSpacing) {
-            if let error = model.error {
+            if model.error != nil {
                 Label(String(localized: "Can't reach the hub"), systemImage: Theme.Icon.offline)
                     .foregroundStyle(Theme.caution)
-                Text(error).foregroundStyle(.secondary)
                 Button { Task { await model.refresh() } } label: { Text("Retry [Components b8784c]").lineLimit(1) }
             } else if model.lastUpdate == nil {
                 ProgressView(String(localized: "Loading [Persona Watch App d04fcb]"))
@@ -363,7 +362,7 @@ private struct WatchQueueView: View {
     @Environment(WatchModel.self) private var model
     var body: some View {
         List {
-            WatchFreshnessView()
+            if !model.isFresh { WatchFreshnessView() }
             ForEach(model.dashboard.queue) { group in
                 Section(group.session?.displayTitle ?? group.interactions.first?.sessionTitle ?? StateName.needsYou.text) {
                     ForEach(group.interactions, id: \.uid) { request in
@@ -415,13 +414,12 @@ private struct WatchRunningView: View {
     @Environment(WatchModel.self) private var model
     var body: some View {
         List {
-            WatchFreshnessView()
+            if !model.isFresh { WatchFreshnessView() }
             ForEach(model.dashboard.running) { running in
                 NavigationLink(value: WatchNavigation.Destination.session(running.session.key)) {
                     VStack(alignment: .leading, spacing: Theme.Watch.lineSpacing) {
                         WatchTitle(session: running.session)
                         Text(running.session.stateLabel).font(Theme.Font.caption).foregroundStyle(running.session.stateTone.text)
-                        if let workflow = running.workflow { WatchWorkflowChip(run: workflow) }
                         if let progress = running.progress { WatchProgressBar(done: progress.done, started: progress.started) }
                     }
                 }.watchCard()
