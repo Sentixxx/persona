@@ -6,6 +6,12 @@ import PersonaWire
 /// #4369: with several hub groups on the watch, one group's failed refresh keeps that group's last cards and agents,
 /// and the same card does not buzz again when the group recovers.
 struct WatchGroupRefreshTests {
+    @Test func initialFailedGroupStaysUnavailableWithoutACachedSnapshot() {
+        let merged = WatchGroupRefresh.mergeGroups(old: [:], new: ["reachable": .empty], failures: ["unreachable"])
+        #expect(merged.data["reachable"] == .empty)
+        #expect(merged.staleFailed.isEmpty)
+        #expect(merged.failures == ["unreachable"])
+    }
     private func interaction(_ id: String, group: String) -> Interaction {
         var ix = Interaction(id: id, machineID: "m", sessionID: "s", kind: .permission)
         ix.group = group

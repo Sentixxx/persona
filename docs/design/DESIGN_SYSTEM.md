@@ -1151,7 +1151,18 @@ Where a conversation scrolls under the chrome that floats over it, the content f
 - A fog is a fixed-size layer at the list's edge. It never depends on the scroll offset, a streaming reply or keystrokes, so it is never drawn again while scrolling or typing (#3435); the keyboard only moves it.
 - No solid band of page color over content, and no material under the footer: on the solid page the page color alone shows what a mask would, without a tinted strip where nothing is behind it. A page that is not one solid color needs a mask instead.
 
-### 3.13 Watch-face complications
+### 3.13 Watch dashboard and complications
+
+#### Dashboard components
+
+For wrist-sized work checks and short answers, the four-page dashboard uses Glance, Needs You, Running and Recordings. Count definitions and navigation ownership live in `docs/apple/ios.md`, "Watch dashboard (Phase A)"; request and Inbox tiles must not be added together as a session count.
+
+- `WatchCountHeader` uses title type and monospaced digits to leave room for actions on 41 mm; `WatchCountTile` uses a label, icon and caption-strong count. The whole count block opens Needs You, rather than adding three tall button hit areas. `Theme.Watch.countLimit` is 99 (display `99+` above it); spoken labels retain the exact count. Zero tiles use `quietOpacity` (0.55), not a different count meaning.
+- `watchCard()` owns list-row surfaces: `Theme.Watch.cardFill`, radius 16, visible gap 10, padding 10 vertically / 12 horizontally, line spacing 4 and minimum row height 44 pt. Reuse `Theme.Font`, `Theme.Icon` and `StatusPalette`; primary content is headline, metadata caption.
+- `WatchQuickAnswerView`, `WatchDecisionButtons` and `WatchAnswerOptionLabel` share answers between Glance and details. Decision buttons stack when width or accessibility text requires it; options wrap and keep their descriptions. Secret/input-required requests use `WatchPhoneAnswerNotice` instead of a quick answer. Visible controls remain usable on watchOS 10; the optional double-tap shortcut is guarded for watchOS 11.
+- `WatchProgressBar` pairs a 4 pt capsule (`progressHeight`, `progressTrack`) with a spoken done/started label; progress is derived from workflow counts, never animation. `WatchFreshnessView` uses `staleAfter` (60 seconds) for age display, errors and Retry rather than treating stale empty data as success. `returnToGlanceAfter` is eight minutes in the background.
+
+#### Watch-face complications
 
 The watch widget extension doesn't build `Theme`, so complications take their fonts, marks and colors from `WatchFaceTokens` (`apple/Shared/Design/WatchFaceTokens.swift`, the documented fixed-size exception in 2.2), whose symbols mirror `Theme.Icon` with an `// icon:` note. A complication only draws what its app last wrote (a snapshot file in the watch App Group); all-day recording reloads only its own kind's timeline (`AllDaySnapshot.widgetKind`), not the other faces'.
 

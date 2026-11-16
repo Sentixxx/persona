@@ -19,10 +19,10 @@ nonisolated enum WatchGroupRefresh {
     /// stays on screen, sorted for a stable banner order; a group that failed before its first success is absent —
     /// there is no earlier data of it to show.
     static func mergeGroups(old: [String: WatchGroupData], new: [String: WatchGroupData], failures: Set<String>)
-        -> (data: [String: WatchGroupData], staleFailed: [String]) {
+        -> (data: [String: WatchGroupData], staleFailed: [String], failures: [String]) {
         var stored = old
         for (group, data) in new { stored[group] = data }
-        return (stored, failures.filter { stored[$0] != nil }.sorted())
+        return (stored, failures.filter { stored[$0] != nil }.sorted(), failures.sorted())
     }
 
     /// Whether a phone summary is news to the watch. Its application context replays at launch and can arrive late, so

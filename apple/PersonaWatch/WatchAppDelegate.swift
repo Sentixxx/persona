@@ -1,9 +1,13 @@
 import UserNotifications
 import WatchKit
+import Observation
 
-/// The watch app's delegate: the notification delegate for all-day recording's notices (it must be set before launch
-/// finishes, or a tap on a notice that launched the app is lost). It answers only for our categories and leaves every
-/// other notification as it was before it existed: not shown while the app is in front, a tap just opens the app.
+@MainActor @Observable
+final class WatchNotificationRoutes {
+    static let shared = WatchNotificationRoutes()
+    var pending = WatchNavigation.Pending()
+}
+
 final class WatchAppDelegate: NSObject, WKApplicationDelegate, UNUserNotificationCenterDelegate {
     func applicationDidFinishLaunching() {
         UNUserNotificationCenter.current().delegate = self
@@ -34,6 +38,18 @@ final class WatchAppDelegate: NSObject, WKApplicationDelegate, UNUserNotificatio
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
                                             withCompletionHandler completionHandler: @escaping () -> Void) {
         let category = response.notification.request.content.categoryIdentifier
+        if response.actionIdentifier == UNNotificationDefaultActionIdentifier,
+           let request = WatchNavigation.notification(category: category,
+                                                      userInfo: response.notification.request.content.userInfo) {
+            nonisolated(unsafe) let done = completionHandler
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    WatchNotificationRoutes.shared.pending.receive(request)
+                    done()
+                }
+            }
+            return
+        }
         guard AllDayNotice.categories.contains(category),
               response.actionIdentifier != UNNotificationDismissActionIdentifier else {
             completionHandler()

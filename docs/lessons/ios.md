@@ -1295,6 +1295,12 @@ Use an invalidation revision as the task key and handle the flag after completio
 - Build-product Info.plist script stages (Settings › About › Build commit, `project.yml` `Stamp the commit`) must declare `$(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)`
   as input, or Xcode may run the script then rewrite the plist, losing values (bundle-id changes trigger this, 2026-10-31). Reading `.git` requires disabling `ENABLE_USER_SCRIPT_SANDBOXING` for this target.
 
+## Watch dashboard navigation: one stack around the vertical pager
+
+Putting a `NavigationStack` inside each page of a watchOS vertical `TabView` caused a simulator layout feedback loop. Keep one outer stack around the pager and bind it to the selected page's path, stored separately in `WatchRootView`. Sheet stacks stay outside the pager. This preserves page-specific navigation state without competing nested navigation layouts.
+
+For follow-up validation, exercise page switching, push/pop, notification cold launch, sheet dismissal and returning after eight minutes in the background. Capture UI evidence and optimized-build performance measurements separately; the structural change alone does not establish that either check passed. See the review checklist in `docs/apple/performance.md` and "UI change self-check" in `docs/design/DESIGN_SYSTEM.md`.
+
 ## Recording and WatchConnectivity
 
 - Receiving `WCSessionFile` must move audio synchronously before delegate return; system deletes the temporary file afterwards. Transport success does not mean index persistence: phone sends application acknowledgement after atomic index write, and watch deletes original only after acknowledgement.

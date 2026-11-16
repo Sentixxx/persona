@@ -41,7 +41,7 @@ nonisolated enum WatchPet {
     static func status(sessions: [Session], interactions: [Interaction], unreachable: Bool, partlyUnreachable: Bool,
                        now: Date = .now, calendar: Calendar = .current) -> WatchPetStatus {
         if unreachable { return WatchPetStatus(state: .offline) }
-        let waiting = Set(interactions.map(\.sessionKey)).union(sessions.filter { $0.state == .needsYou }.map(\.key))
+        let waiting = WatchDashboard.waitingSessions(sessions: sessions, interactions: interactions)
         if !waiting.isEmpty { return WatchPetStatus(state: .needsYou, count: waiting.count) }
         let working = sessions.filter { $0.state == .working }.count
         if working > 0 { return WatchPetStatus(state: .working, count: working) }

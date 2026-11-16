@@ -1590,6 +1590,32 @@ iOS, Mac, visionOS, watch and extensions support Simplified Chinese, English and
   UI hierarchy: each row's main content (question, session name, Inbox title) uses headline; type and location use footnote; messages and plans strip Markdown markers (`WatchText.shown`),
   bubbles fit text width, own messages align right; before any data arrives show "Loading"; when the hub is unreachable, a top row says "Can't reach the hub" + "Retry" (with old data, say how old it is).
 
+### Watch dashboard (Phase A)
+
+For people checking work and answering short requests from their wrist. The existing Phase A plan requires no hub changes: reuse the current summaries, requests and answer endpoints.
+
+- **Four pages**, in order: **Glance** (Needs You, request/message tiles, next request and quick answers), **Needs You** (requests grouped by session, then Inbox messages), **Running** (working and unread sessions, workflow progress), **Recordings** (all-day recording, meetings and the persona). The Record toolbar action remains available across pages.
+- **Navigation**: one outer `NavigationStack` wraps the vertical `TabView`; `WatchRootView` keeps a separate destination path per page and binds the stack to the selected page. Stacks nested inside vertical pages caused a simulator layout feedback loop. Detail sheets have their own stacks outside the pager. After at least eight minutes in the background, return to Glance and clear paths; incoming routes also clear paths before selecting their destination.
+- **Compatibility**: watchOS 10 keeps visible buttons, vertical paging and detail navigation. The double-tap shortcut is optional: `watchOpenGesture()` applies `handGestureShortcut(.primaryAction)` only under the watchOS 11 availability guard. It is not a prerequisite for answering.
+
+`WatchDashboard` is the canonical projection of the filtered sessions, interactions and Inbox snapshot:
+
+| Number | Definition |
+| --- | --- |
+| Needs You | Distinct `SessionKey`s in the union of interaction owners and sessions whose state is `.needsYou`; several requests in one session count once. |
+| Approvals | Permission plus plan interactions; counts requests, not sessions. |
+| Questions | Question plus screen interactions; elicitation requests stay in the queue but not this tile. |
+| Messages | Inbox items not done whose triage is `.action`; separate from Needs You. |
+| Working / unread | Distinct sessions in `.working` / `.unread`; both appear on Running. |
+| Background waiting | Working or unread sessions with `waitsInBackground`; a subset, not an additional working count. |
+| Workflow progress | Only when `agentsStarted > 0`; missing done is zero and done is clamped to `0...agentsStarted`. |
+
+The tiles are not a breakdown that sums to Needs You. The queue is oldest-first by session; Next Up chooses an answerable request by permission, plan, question, screen, then elicitation, oldest-first within each kind. If none is answerable, it shows the oldest request with the appropriate detail/input fallback.
+
+- **Answers**: `WatchAnswers` hides a submitted request immediately, blocks duplicate submissions and suppresses accepted requests in stale snapshots. Failure restores the request with its error; an accepted ID is retired once absent from a subsequent snapshot. Needs You still includes a session explicitly marked `.needsYou`. Input-required or secret requests direct the user to iPhone or computer; existing plan approval semantics remain unchanged.
+- **Routes and pairing**: `WatchConfigs.hubIDs` is an optional group-to-hub-ID map; older phone payloads may omit it. `WatchNavigation` holds a pending route until data loads. Resolution uses a unique hub match, or an explicit known group when no hub ID was supplied, then a unique machine/session owner; ambiguous or unresolved ownership opens Needs You. A missing interaction falls back to its session when identified; unavailable detail returns to the queue.
+- **Freshness**: retain older data with errors and Retry; show its age after 60 seconds or on failure. Empty success states require fresh data. DEBUG fixtures use `-showWatchDashboard <state>` and `-openWatchPage glance|queue|running|recordings`; the Release guard checks both app binaries for these switches. These are inspection entry points, not evidence of passed validation.
+
 ## Demo mode (see every feature without a hub, 2026-10-30)
 
 TestFlight has a public link and must pass Beta App Review: previously an unpaired App showed only the pairing page, leaving reviewers and friends who had not set up a hub unable to see anything (potential rejection under 2.1).

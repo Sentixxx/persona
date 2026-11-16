@@ -459,7 +459,11 @@ extension AppModel {
                             missing: missing,
                             deviceIDs: Dictionary(uniqueKeysWithValues: configs.keys.compactMap { group in
                                 registry.primary(group)?.watchDeviceID.map { (group, $0) }
-                            }), features: extensionSurfaceCapabilities.filter { configs[$0.key] != nil })
+                            }), features: extensionSurfaceCapabilities.filter { configs[$0.key] != nil },
+                            hubIDs: Dictionary(uniqueKeysWithValues: configs.keys.compactMap { group in
+                                guard let hubID = registry.primary(group)?.hubID, !hubID.isEmpty else { return nil }
+                                return (group, hubID)
+                            }))
     }
 
     /// Only the authenticated hello of the hub whose credential is exported, never another mesh member's.

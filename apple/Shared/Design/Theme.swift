@@ -483,6 +483,12 @@ nonisolated enum Theme {
     /// The watch's list rows: rounded cards with room around and inside them, like the system's lists (rows at least
     /// 44 pt). The phone does not use these.
     enum Watch {
+        static let countLimit = 99
+        static let staleAfter: TimeInterval = 60
+        static let returnToGlanceAfter: TimeInterval = 8 * 60
+        static let progressHeight: CGFloat = 4
+        static let quietOpacity = 0.55
+        static let progressTrack = Color.secondary.opacity(0.2)
         /// Between two cards, as seen (it was 5).
         static let cardGap: CGFloat = 10
         /// What watchOS's List already leaves between two rows (measured on a 46 mm simulator): the cards add the rest.

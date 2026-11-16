@@ -207,10 +207,5 @@
   },
   "Persona\/Views\/Settings\/StorageView.swift" : {
     "hstackSpacing" : 1
-  },
-  "PersonaWatch\/PersonaWatchApp.swift" : {
-    "fixedFrame" : 4,
-    "padding" : 3,
-    "rawSymbol" : 10
   }
 }

@@ -16,6 +16,7 @@ nonisolated struct WatchConfigs: Codable, Sendable, Equatable {
     var deviceIDs: [String: String]? = nil
     /// Authenticated phone hello capabilities by group; missing is unknown, an empty array is known unsupported.
     var features: [String: [String]]? = nil
+    var hubIDs: [String: String]? = nil
 }
 
 nonisolated extension WatchConfigs {
