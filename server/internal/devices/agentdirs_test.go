@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/nwverse/persona/server/internal/proto"
 )
@@ -39,7 +40,8 @@ func TestHiddenAgentDirsRoutes(t *testing.T) {
 	if code != 200 {
 		t.Fatalf("PUT = %d %v", code, out)
 	}
-	want := []proto.HiddenAgentDir{{Pattern: "~/.automation/workspaces", Enabled: true}, {Pattern: "*scratch*", Enabled: false}}
+	// Saved without an action (the hiding-only version, an older client): hide, what such a rule did.
+	want := []proto.HiddenAgentDir{{Pattern: "~/.automation/workspaces", Enabled: true, Action: proto.AgentDirHide}, {Pattern: "*scratch*", Enabled: false, Action: proto.AgentDirHide}}
 	var stored []proto.HiddenAgentDir
 	if _, err := st.Setting(context.Background(), hiddenAgentDirsKey("m1"), &stored); err != nil || !slices.Equal(stored, want) {
 		t.Fatalf("stored %+v %v", stored, err)
@@ -51,7 +53,7 @@ func TestHiddenAgentDirsRoutes(t *testing.T) {
 	if code, _ := put(t, mux, "/api/v1/machines/m1/agent-dirs/hidden", `{"rules":[{"pattern":"~/.automation/workspaces","enabled":true},{"pattern":"*scratch*","enabled":false}]}`); code != 200 || len(*changed) != 1 {
 		t.Fatalf("no-op PUT: %d told %v", code, *changed)
 	}
-	// Collection is untouched: the node is never told about hidden folders.
+	// Collection is untouched: the node is never told about hidden folders (only blocking ones, below).
 	if rules, home, err := h.HiddenAgentDirs(context.Background(), "m1"); err != nil || home != "/home/me" || !slices.Equal(rules, want) {
 		t.Fatalf("read: %+v %q %v", rules, home, err)
 	}
@@ -110,5 +112,59 @@ func TestEditHiddenAgentDirsKeepsNewerRules(t *testing.T) {
 	}
 	if _, err := h.EditHiddenAgentDirs(ctx, "nope", add("/x")); err == nil {
 		t.Fatal("edited an unknown machine")
+	}
+}
+
+// A rule's action: block or hide, nothing else. The node is told the blocking patterns of the rules switched on,
+// when it connects and again when they change; a change that leaves them as they were tells it nothing (#10053).
+func TestBlockedAgentDirsReachTheNode(t *testing.T) {
+	_, st, m, mux, changed := hiddenDirsHub(t)
+	f := connectDirsNode(t, m)
+	if code, _ := put(t, mux, "/api/v1/machines/m1/agent-dirs/hidden", `{"rules":[{"pattern":"/work","enabled":true,"action":"delete"}]}`); code != 400 {
+		t.Fatalf("an unknown action: %d", code)
+	}
+	told := func() [][]string {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		var out [][]string
+		for _, c := range f.configure {
+			if raw, ok := c["agent_dirs_blocked"]; ok {
+				var p []string
+				_ = json.Unmarshal(raw, &p)
+				out = append(out, p)
+			}
+		}
+		return out
+	}
+	code, _ := put(t, mux, "/api/v1/machines/m1/agent-dirs/hidden", `{"rules":[{"pattern":"~/.remi/multiremi","enabled":true,"action":"block"},{"pattern":"/scratch","enabled":true,"action":"hide"},{"pattern":"/off","enabled":false,"action":"block"}]}`)
+	if code != 200 {
+		t.Fatal(code)
+	}
+	eventually(t, 5*time.Second, "the node told the blocking patterns", func() bool {
+		got := told()
+		return len(got) == 1 && slices.Equal(got[0], []string{"~/.remi/multiremi"})
+	})
+	var stored []proto.HiddenAgentDir
+	if _, err := st.Setting(context.Background(), hiddenAgentDirsKey("m1"), &stored); err != nil || stored[0].Action != proto.AgentDirBlock {
+		t.Fatalf("stored %+v %v", stored, err)
+	}
+	// Only a hide rule switched off: the node's patterns are the same, it is not told again.
+	if code, _ := put(t, mux, "/api/v1/machines/m1/agent-dirs/hidden", `{"rules":[{"pattern":"~/.remi/multiremi","enabled":true,"action":"block"},{"pattern":"/scratch","enabled":false,"action":"hide"},{"pattern":"/off","enabled":false,"action":"block"}]}`); code != 200 {
+		t.Fatal(code)
+	}
+	// Switching the rule to hide unblocks it on the node.
+	if code, _ := put(t, mux, "/api/v1/machines/m1/agent-dirs/hidden", `{"rules":[{"pattern":"~/.remi/multiremi","enabled":true,"action":"hide"}]}`); code != 200 {
+		t.Fatal(code)
+	}
+	eventually(t, 5*time.Second, "the node told it is unblocked", func() bool {
+		got := told()
+		return len(got) == 2 && len(got[1]) == 0
+	})
+	if len(*changed) != 3 {
+		t.Fatalf("the assistant told %v", *changed)
+	}
+	// A connection's own configure carries them too.
+	if p := m.blockedAgentDirsParam(context.Background()); p == nil || len(p) != 0 {
+		t.Fatalf("param %#v", p)
 	}
 }

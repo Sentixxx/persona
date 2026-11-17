@@ -221,6 +221,9 @@ func (n *Node) cwdBlocked(cwd string) bool {
 	if cwd == "" {
 		return false
 	}
+	if n.agentDirBlocked(cwd) { // a blocked Agent folder (agentdirs.go)
+		return true
+	}
 	d := n.cdirs
 	if d == nil {
 		return false
@@ -228,11 +231,7 @@ func (n *Node) cwdBlocked(cwd string) bool {
 	d.mu.Lock()
 	blocked := d.blocked
 	d.mu.Unlock()
-	if len(blocked) == 0 {
-		return false
-	}
-	real, _ := filepath.EvalSymlinks(proto.ExpandHome(cwd, n.home))
-	return proto.ClaudeDirBlocked(cwd, n.home, blocked) || (real != "" && proto.ClaudeDirBlocked(real, n.home, blocked))
+	return n.dirMatches(cwd, blocked)
 }
 
 func (n *Node) blockedBy(dir, real string, patterns []string) bool {
