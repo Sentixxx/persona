@@ -83,3 +83,91 @@ func TestHiddenDirectoryPendingCardTransportTransitions(t *testing.T) {
 		})
 	}
 }
+
+// stallingHub is the fake hub whose fleet.interaction writes wait for release, as a stalled hub connection would.
+type stallingHub struct {
+	*fakeHub
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (h *stallingHub) Tell(event string, params any) error {
+	if event == assistantwire.EventFleetInteraction {
+		select {
+		case h.entered <- struct{}{}:
+		default:
+		}
+		<-h.release
+	}
+	return h.fakeHub.Tell(event, params)
+}
+
+// A visibility replay stalled on the hub's connection must not hold fleet.mu: card lookups and answers go on, and the
+// replay still arrives once the write is released (review of #8584).
+func TestHiddenDirectoryReplayStallDoesNotBlockCards(t *testing.T) {
+	ft := newFleetTest(t)
+	ft.d.setSessions("mac", []proto.Session{{SessionID: "blocked", Cwd: "/work/noisy", Status: proto.StatusBlocked}})
+	ix := proto.Interaction{ID: "ix_stall", MachineID: "mac", SessionID: "blocked", Kind: proto.IxPermission, Summary: "Approve work", CreatedAt: time.Now()}
+	ft.s.fleet.mu.Lock()
+	ft.s.fleet.interactions = map[string]*pending{ix.ID: {ix: ix}}
+	ft.s.fleet.mu.Unlock()
+	dirs := useAgentDirs(ft.s)
+	hub := &stallingHub{fakeHub: ft.f, entered: make(chan struct{}, 1), release: make(chan struct{})}
+	ft.s.hub = hub
+	released := false
+	defer func() {
+		if !released {
+			close(hub.release)
+		}
+	}()
+
+	replayed := make(chan struct{})
+	go func() {
+		defer close(replayed)
+		dirs.set(t, "mac", proto.HiddenAgentDir{Pattern: "/work/other", Enabled: true})
+	}()
+	select {
+	case <-hub.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the replay never wrote the pending card")
+	}
+
+	within := func(what string, f func()) {
+		t.Helper()
+		done := make(chan struct{})
+		go func() { defer close(done); f() }()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("%s waited for the stalled replay write", what)
+		}
+	}
+	within("pendingIx", func() {
+		if _, ok := ft.s.pendingIx(ix.ID); !ok {
+			t.Error("pendingIx lost the card")
+		}
+	})
+	deny := false
+	within("resolve", func() { _ = ft.s.resolve(ix.ID, proto.Resolution{Allow: &deny}) })
+
+	close(hub.release)
+	released = true
+	select {
+	case <-replayed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the replay did not finish after its write was released")
+	}
+	ft.f.mu.Lock()
+	defer ft.f.mu.Unlock()
+	delivered := false
+	for _, event := range ft.f.told {
+		if event.event == assistantwire.EventFleetInteraction {
+			var p assistantwire.FleetInteraction
+			_ = json.Unmarshal(event.params, &p)
+			delivered = delivered || p.Interaction.ID == ix.ID
+		}
+	}
+	if !delivered {
+		t.Fatal("the replay did not arrive once its write was released")
+	}
+}
