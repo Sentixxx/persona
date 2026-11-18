@@ -117,19 +117,15 @@ func TestBlockedAgentDirRuntimeSession(t *testing.T) {
 func TestBlockedAgentDirClaudeHook(t *testing.T) {
 	n, hub := runtimeNode(t)
 	n.setBlockedAgentDirs([]string{"/w/bot"})
-	hook := func(sid, cwd string) any {
+	hook := func(sid, cwd string) (any, error) {
 		raw, _ := json.Marshal(hookInput{HookEventName: "PermissionRequest", SessionID: sid, Cwd: cwd, ToolName: "Bash",
 			ToolInput: json.RawMessage(`{"command":"rm -rf build"}`)})
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
-		out, err := n.handleHook(ctx, sockRequest{Input: raw, Attempt: "a-" + sid})
-		if err != nil {
-			t.Fatal(err)
-		}
-		return out
+		return n.handleHook(ctx, sockRequest{Input: raw, Attempt: "a-" + sid})
 	}
 	start := time.Now()
-	if out := hook("11111111-0000-0000-0000-00000000b0b1", "/w/bot/run-1"); out != nil || time.Since(start) > time.Second {
+	if out, err := hook("11111111-0000-0000-0000-00000000b0b1", "/w/bot/run-1"); err != nil || out != nil || time.Since(start) > time.Second {
 		t.Fatalf("blocked hook answered %v after %v", out, time.Since(start))
 	}
 	hub.mu.Lock()
@@ -138,7 +134,7 @@ func TestBlockedAgentDirClaudeHook(t *testing.T) {
 	if asked != 0 || slices.Contains(events, "hook.event") {
 		t.Fatalf("the hub heard of a blocked hook: asked=%d events=%v", asked, events)
 	}
-	go hook("22222222-0000-0000-0000-00000000a991", "/w/app") // waits on the hub's answer
+	go func() { _, _ = hook("22222222-0000-0000-0000-00000000a991", "/w/app") }() // waits on the hub's answer
 	waitFor(t, "the visible session's hook", func() bool {
 		hub.mu.Lock()
 		defer hub.mu.Unlock()
