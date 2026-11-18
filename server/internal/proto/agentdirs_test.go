@@ -7,7 +7,7 @@ import (
 
 // Hidden folders use the blocked folders' syntax: the same cleaning, validity and matcher.
 func TestAgentDirPatterns(t *testing.T) {
-	for in, want := range map[string]string{" ~/work/ ": "~/work", "/opt/b//": "/opt/b", "*multiremi*": "*multiremi*"} {
+	for in, want := range map[string]string{" ~/work/ ": "~/work", "/opt/b//": "/opt/b", "*botfarm*": "*botfarm*"} {
 		if got, ok := CleanDirPattern(in); !ok || got != want {
 			t.Errorf("clean %q = %q %v", in, got, ok)
 		}
@@ -17,13 +17,13 @@ func TestAgentDirPatterns(t *testing.T) {
 			t.Errorf("%q covers everything", everything)
 		}
 	}
-	rules := []HiddenAgentDir{{Pattern: "/work", Enabled: true}, {Pattern: "/off", Enabled: false}, {Pattern: "*multiremi*", Enabled: true}}
+	rules := []HiddenAgentDir{{Pattern: "/work", Enabled: true}, {Pattern: "/off", Enabled: false}, {Pattern: "*botfarm*", Enabled: true}}
 	patterns := HiddenAgentDirPatterns(rules)
-	if !slices.Equal(patterns, []string{"/work", "*multiremi*"}) {
+	if !slices.Equal(patterns, []string{"/work", "*botfarm*"}) {
 		t.Fatalf("enabled patterns %v", patterns)
 	}
 	for dir, want := range map[string]string{
-		"/work/a/src": "/work", "/home/me/.remi/multiremi/workspaces/x": "*multiremi*", "/off/a": "", "/workshop": "",
+		"/work/a/src": "/work", "/home/me/.bots/botfarm/workspaces/x": "*botfarm*", "/off/a": "", "/workshop": "",
 	} {
 		if got := DirPatternMatchedBy(dir, "/home/me", patterns); got != want {
 			t.Errorf("%q matched by %q, want %q", dir, got, want)
@@ -41,12 +41,12 @@ func TestDirPatternMatchedOnLinkedHome(t *testing.T) {
 		dir, pattern, real string
 		want               bool
 	}{
-		{"/data/home/me/.remi/multiremi/workspaces/x", "~/.remi/multiremi/*", real, true},
-		{"/data/home/me/.remi/multiremi", "~/.remi/multiremi", real, true},
-		{"/home/me/.remi/multiremi/w", "/data/home/me/.remi/multiremi", real, true},
-		{"/data/home/me/.remi/multiremi/workspaces/x", "~/.remi/multiremi/*", "", false}, // the node never said
-		{"/data/home/meow/.remi/multiremi/x", "~/.remi/multiremi/*", real, false},
-		{"/data/home/me/code", "~/.remi/multiremi/*", real, false},
+		{"/data/home/me/.bots/botfarm/workspaces/x", "~/.bots/botfarm/*", real, true},
+		{"/data/home/me/.bots/botfarm", "~/.bots/botfarm", real, true},
+		{"/home/me/.bots/botfarm/w", "/data/home/me/.bots/botfarm", real, true},
+		{"/data/home/me/.bots/botfarm/workspaces/x", "~/.bots/botfarm/*", "", false}, // the node never said
+		{"/data/home/meow/.bots/botfarm/x", "~/.bots/botfarm/*", real, false},
+		{"/data/home/me/code", "~/.bots/botfarm/*", real, false},
 	} {
 		if got := DirPatternMatchedOn(c.dir, home, c.real, []string{c.pattern}) != ""; got != c.want {
 			t.Errorf("%q by %q (real %q) = %v", c.dir, c.pattern, c.real, got)

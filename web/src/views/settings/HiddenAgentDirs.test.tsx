@@ -51,7 +51,7 @@ it("says why a typed folder cannot be added", () => {
  expect(hiddenPatternError("relative", [])).toBe(t("hidden-agent-dirs.pattern_prefix"));
  expect(hiddenPatternError("~/", [])).toBe(t("hidden-agent-dirs.pattern_root"));
  expect(hiddenPatternError("~/work/*/", original.rules)).toBe(t("hidden-agent-dirs.pattern_exists"));
- expect(hiddenPatternError("*multiremi*", original.rules)).toBe("");
+ expect(hiddenPatternError("*botfarm*", original.rules)).toBe("");
 });
 it("adds a new rule as Block unless Hide is chosen, and switches an existing rule's action (#10053)", async () => {
  await show();

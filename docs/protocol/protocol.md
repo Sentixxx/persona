@@ -276,7 +276,7 @@ The authenticated WS `hello.features` always lists server capabilities; trusted 
 A feature flag means the implementation supports it; `tls` does not mean the listener is on, so also check `tls_port` / `fp`. A new client talking to an old hub falls back to the old behavior based on the flags. `node_version` / `node_mismatch` in the machine list flag whether the hub offers to redeploy the node: it runs another build than the one its platform gets (the hub's, or, with no build of the hub's version for that platform, the newest release its manager drives: `docs/operations/node-update.md` ("Node packages")) (the personad on that computer was not deployed by this hub deployment, i.e. `deploy.sh` deployed only part of it, or it was installed on its own; the hub also logs a line when it connects), or its manager cannot drive it. Another build alone is an upgrade offer, not a fault: whether a node can be used is decided by the node handshake (`node_protocol`, `node_incompatible`; see "Node handshake"). New fields are all optional, and the App currently checks whether a field is present. When a future request would be "misunderstood by an old hub", check here first.
 
 `ultracode` indicates support for Claude Code's independent session toggle (#3427; see "Claude Code ultracode" below). This is a hub capability: switching it on a computer with an older node can still return `409 node_outdated`.
-`start_goal` (a per-node capability, not a hub feature) indicates that node's `session.start` can carry `goal`: a Claude Code `/goal` the node types and verifies after the first message is in the transcript (see "A goal set at the start" below). The hub answers a start carrying a non-empty `goal` toward a node without the capability with `409 start_goal_unsupported` before anything starts, so the caller can start again without it.
+`start_goal` (a per-node capability, not a hub feature) indicates that node's `session.start` can carry `goal`: a Claude Code (or, on newer nodes, Codex) `/goal` the node types and verifies after the first message is in the transcript (see "A goal set at the start" below). The hub answers a start carrying a non-empty `goal` toward a node without the capability with `409 start_goal_unsupported` before anything starts, so the caller can start again without it.
 
 `launcher_switch` is a hub capability too: a computer whose node has not announced the `launcher_switch` capability (or that the manager has not reported yet) answers a `launcher` with `409 node_outdated`.
 
@@ -645,11 +645,11 @@ Assistant snapshots and `agents_list` also carry the state. When on, they explai
 ## A goal set at the start
 
 A `POST /api/v1/sessions` (the node's `session.start`) can carry `goal: string` alongside `prompt`. Only a brand-new
-Claude Code session in a terminal the node can read and type into takes it, and only with a `prompt` to set it after;
-a resume, an agent other than Claude Code, a screenless engine, a start without a `prompt` (an `async` one whose first
-message comes later) or a condition over 2000 characters is refused before anything starts with
-`409 start_goal_unsupported`, and a node without the `start_goal` capability gets the same code. The condition is
-one line: newlines collapse to spaces.
+Claude Code or Codex session in a terminal the node can read and type into takes it, and only with a `prompt` to set it
+after; a resume, an agent other than Claude Code or Codex, a screenless engine (the start's own host, else the
+default), a start without a `prompt` (an `async` one whose first message comes later) or a condition over 2000
+characters is refused before anything starts with `409 start_goal_unsupported`, and a node without the `start_goal`
+capability gets the same code. The condition is one line: newlines collapse to spaces.
 
 When it takes the goal, the node types the `prompt` first (after an `ultracode` start switch, as usual) and, once the
 transcript has it, types `/goal <condition>` on its own while the agent works: Claude Code runs `/goal` at once even
@@ -666,6 +666,10 @@ The assistant supplies the condition from a task's `done_when` as one checkable 
 assistant's policy, not the node's. The goal is otherwise the documented Claude Code goal (see
 [Agent goals](../integrations/agent-goal.md)): its `goal_status` attachment and "Goal set:" output update
 `Session.goal` in the usual way.
+
+A new Codex start takes the goal as Codex's own `/goal <objective>`, typed once the start found the thread its
+`prompt` began, and confirmed from the rollout's `thread_goal_updated` line instead of the screen; a Codex older than
+0.169 gets no command ([Agent goals](../integrations/agent-goal.md), "Codex").
 
 ## Switching a running Agent to another provider (`launcher_switch`, #5035)
 
@@ -862,6 +866,7 @@ spawned Agents").
 The original `/api/v1/launchers` stays compatible. Providers gain `kind` (`launcher` / `api`) and `api` (`messages` / `responses`). An API connection using the Messages protocol can also serve as a launcher for the main chat and Agents (the node starts claude with its URL and Key, #2455); Responses ones can't.
 
 - `GET /api/v1/model-config` → `{purposes, providers}`. `purposes` are the five categories, the AI twin (`inbox.agent`), Lark /agent (`lark.agent`), the background supervisor (`assistant.supervise`, #5806: `kind` `launcher`, `launch` `headless`, `parent` and `category_id` `assistant`, its own `override`, `revision` and `fields`, the same object its single-item GET answers) and then the extensions' purposes, in that order. A hub before #5806 leaves `assistant.supervise` out and answers it by its ID only, so a client that reads it by ID must draw it once when the list has it; clients must take a purpose ID they do not know as a row named by `name` (`docs/assistant/model-config.md` “The background supervisor in the catalog”).
+  A listed purpose with calls in the last 7 UTC days (today included) carries `usage` `{calls, failures, input_tokens, output_tokens, cache_read_input_tokens, cache_creation_input_tokens}` (#10498): its own calls and those of the unlisted uses under it, added up; absent without calls, from an older hub and on the single-item GET (`docs/assistant/model-config.md` “Counting”).
 - `GET /api/v1/model-config/purposes/{id}` → `{purpose, providers}`. A built-in purpose carries `description` (#5086): what it is for, one sentence in the request's language; optional, absent from an older hub and for a task's, an extension's or a plugin's purpose.
 - `PUT /api/v1/model-config/purposes/{id}` and compatible `PATCH` take `{revision, provider?, model?, effort?}`; missing fields are unchanged, `null` clears the override, and a revision conflict returns 409. On success they return the same as the single-item GET. `inbox.agent` (the AI twin) and `lark.agent` are editable children of `agent.new`, each with its own revision and override; empty selections follow Agents. Their retired records are not consulted. Other legacy children with empty `fields` remain read-only (`docs/assistant/model-config.md`, “Lark /agent override”, “AI twin override”).
   Every assistant conversation on Claude Code runs on its CLI, and no purpose has a runtime: a `runtime` an older client sends (any value, `null` included, on any purpose) is accepted and ignored, the `assistant` entry has no `runtimes` and no `fields` lists `runtime`, and a binding an older hub stored with `runtime` reads as the CLI. The node's `assistant.send` / `assistant.start` / `assistant.warm` (params the manager fills in from the model configuration) carry no `runtime`, and the node ignores one an older hub still sends (`docs/assistant/model-config.md`, "How the main chat runs (#9799)").
@@ -2115,9 +2120,9 @@ How a device adds a pending computer: see "Computer pairing codes" under "Tempor
 ### Start defaults
 
 An optional policy of what a task Agent starts with beyond what its caller named, by the kind of work; with no policy,
-an expired one or no rule that fits, a task starts exactly as without the feature (rules and behaviour:
-`docs/assistant/assistant.md` "Start defaults"). It is one setting on the assistant (`start_defaults` in `GET`/`PUT
-/api/v1/assistant`, full credentials; empty rules clear it) and has its own route,
+an expired one or no rule that fits, a task starts exactly as without the feature, apart from the Codex goal default
+below (rules and behaviour: `docs/assistant/assistant.md` "Start defaults"). It is one setting on the assistant
+(`start_defaults` in `GET`/`PUT /api/v1/assistant`, full credentials; empty rules clear it) and has its own route,
 `GET`/`PUT /api/v1/assistant/start-defaults`, open to full credentials and to an extension token granted
 `assistant.start_defaults` (an extension's policy must expire within one hour). Its shape:
 
@@ -2145,9 +2150,17 @@ an expired one or no rule that fits, a task starts exactly as without the featur
 - `then`: every field optional. `presets` are Agent presets (the active model profile's tiers, see
   `GET /api/v1/assistant/worker-presets`) tried in order, the first one the task's computer can start winning, or one
   of the usable ones by weight when weights differ; `effort` one of `low` / `medium` / `high` / `xhigh` / `max`;
-  `ultracode` a boolean (`true` turns it on for a task that did not set it; `false` asks for nothing); `goal` only
-  `done_when`; `plan_first` a boolean. Effort, ultracode and goal reach Claude Code starts only.
-- Rules are tried in order and the first that fits wins. A caller's own effort, ultracode, tier, model or launcher is
+  `ultracode` a boolean (`true` turns it on for a task that did not set it; `false` asks for nothing); `goal` either
+  `done_when` (a goal from the task's `done_when`) or `off` (no start goal, which turns off the Codex default below);
+  `plan_first` a boolean. Effort and ultracode reach Claude Code starts only; a goal reaches new Claude Code and Codex
+  starts of tasks with `done_when`.
+- With no fitting rule naming `goal` for a task (no policy, none that fits, or every fitting one silent on `goal`), a
+  new Codex start of a task with `done_when` carries that goal by default; a Claude Code start carries none.
+  `"goal":"off"` in a rule is how the owner turns the Codex default off; any other value is 400. The default is not
+  sent to a start in an engine runtime or through an app launcher, and a node's refusal of it is not put in the task's
+  `why`.
+- Rules are tried in order and the first that fits wins, except for `goal`: the first fitting rule that names `goal`
+  decides it, whichever rule supplies the rest. A caller's own effort, ultracode, tier, model or launcher is
   never replaced. A rule's values apply to one start try: the next try starts again from what the task named, and for
   whatever a rule filled in the task in `TaskPlan` keeps its own value, never the policy's (its `why` names a preset the
   policy picked).
@@ -5308,7 +5321,7 @@ the second keeps the name it had when hiding was its only action), and use one p
 computer's home for showing `~`, absent before its node first said). `PUT` replaces the computer's whole list and
 returns the new state; an answer-only device cannot call it. Offline computers can be set up. A rule is a path or
 `filepath.Match` glob starting with `/` or `~/` (`~` is that computer's home, never the manager's; until it is
-known a `~/` rule does not match), or a folder name glob starting with `*` (`*multiremi*`) that matches a folder of
+known a `~/` rule does not match), or a folder name glob starting with `*` (`*botfarm*`) that matches a folder of
 that name anywhere in the path. A rule matches the folder and everything under it. Trailing slashes are dropped;
 patterns that would cover home or the root, invalid globs, duplicates, an `action` other than `block` or `hide`, and
 more than 100 rules are refused (400). A rule saved without an `action` (by the hiding-only version, #8578, or an

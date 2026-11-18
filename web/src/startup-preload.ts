@@ -403,10 +403,15 @@ export async function brotliCopies(dir: string, files: string[]): Promise<{ file
 // lib/todo-triage.ts's functions; a direct import from the recorder's chunk split lib/todo-triage.ts into a chunk of its
 // own, about 700 B). 49 B in each language, measured in one environment against main d5050affc5 (ja 482,098 B to
 // 482,147 B; en 478,979 B to 479,028 B, zh-Hans 479,841 B to 479,890 B). The budget stays.
-// #8578: directory-hidden Agents leave the lists, counts and attention events (lib/sessions.ts directoryVisible,
-// lib/attention.ts) and the Agents page gets its Hidden sessions button; the inspection dialog is a chunk of its own
-// (views/HiddenAgentSessionsDialog.tsx). Merged with main affb08b4d0 and measured in one
-// environment: ja 482,322 B, en 479,225 B, zh-Hans 480,079 B, 361 B of room. The budget stays.
+// 2026-11-18 (#10538): #10524 (ja 482,147 B to 482,619 B) and #10504 (to 482,722 B) left main's ja first screen 39 B over
+// the budget, so main stopped building. The main conversation's readiness help (views/assistant/ReadinessHelp.tsx, a
+// lazyOverlay started once something that opens it is on screen) and its assistant-readiness words left the first screen:
+// ja 482,722 B to 481,367 B, en 479,634 B to 478,331 B, zh-Hans 480,477 B to 479,146 B, measured in one environment
+// against main 51eb4b6a47. The budget stays.
+// #8578: directory-hidden Agents and their pending cards leave the lists, counts and attention events (lib/sessions.ts
+// directoryVisible / directoryVisibleCards, lib/attention.ts) and the Agents page gets its Hidden sessions button; the
+// inspection dialog is a chunk of its own (views/HiddenAgentSessionsDialog.tsx). Merged with main f7c715f076 and measured
+// in one environment: ja 481,528 B, en 478,433 B, zh-Hans 479,282 B (1,155 B of room). The budget stays.
 export const FIRST_SCREEN_BUDGET = 482_683;
 // The hash in a built file's name: the 8 characters of Rollup's [hash] (url-safe base64) between "-" and the
 // extension, as vite.config.ts names every chunk and asset ("assets/[name]-[hash].js", "[name]-[hash][extname]").

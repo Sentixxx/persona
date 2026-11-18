@@ -32,7 +32,7 @@ import Testing
         let state = HiddenAgentDirs(rules: [HiddenAgentDirRule(pattern: "~/work", enabled: true)])
         #expect(HiddenAgentDirs.cleaned(" ~/workspaces/ ") == "~/workspaces")
         #expect(state.problem("") == nil)
-        #expect(state.problem("*multiremi*") == nil)
+        #expect(state.problem("*botfarm*") == nil)
         #expect(state.problem("/opt/bots") == nil)
         #expect(state.problem("relative") != nil)
         #expect(state.problem("~/") != nil)

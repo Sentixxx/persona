@@ -2,7 +2,7 @@
 // so capability checks work wherever the card appears, not only after opening the Agent.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { connect, getSession, getState, reset } from "./store";
-import { stateCounts } from "./sessions";
+import { directoryVisibleCards, stateCounts } from "./sessions";
 import { interactionCanAnswer } from "./format";
 import type { Interaction, Session } from "./types";
 
@@ -122,4 +122,30 @@ it("retains a hidden pending card and restores its actionable projection after a
   expect(getState().interactions.filter((ix) => ix.id === rootCard.id)).toHaveLength(1);
   expect(interactionCanAnswer(rootCard, getSession("demo", "off-page"))).toBe(true);
   expect(stateCounts([getSession("demo", "off-page")!]).badge).toBe(1);
+});
+
+// #8578: a hidden session's card stays in the store (answerable on its own page) but leaves every card list and count.
+it("leaves a directory-hidden session's card out of the card lists until its folder is shown again", async () => {
+  connect();
+  Socket.last.push({ type: "hello", features: [] });
+  await settle();
+  Socket.last.push({ type: "sessions", machine_id: "demo", sessions: [{ ...rootSession, hidden_by_directory: true }] });
+  Socket.last.push({ type: "interaction", interaction: rootCard });
+  await settle();
+  expect(directoryVisibleCards(getState().interactions)).toEqual([]);
+  Socket.last.push({ type: "sessions", machine_id: "demo", sessions: [rootSession] });
+  await settle();
+  expect(directoryVisibleCards(getState().interactions).map((ix) => ix.id)).toEqual([rootCard.id]);
+});
+
+it("leaves out a hidden off-page session's card once its exact lookup says it is hidden", async () => {
+  exactRows = [{ ...rootSession, hidden_by_directory: true }];
+  connect();
+  Socket.last.push({ type: "hello", features: ["sessions_list", "sessions_lookup"] });
+  await settle();
+  Socket.last.push({ type: "interaction", interaction: rootCard });
+  await settle();
+  expect(lookups).toHaveLength(1);
+  expect(getState().interactions.map((ix) => ix.id)).toEqual([rootCard.id]);
+  expect(directoryVisibleCards(getState().interactions)).toEqual([]);
 });

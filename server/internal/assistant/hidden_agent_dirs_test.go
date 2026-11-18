@@ -85,7 +85,7 @@ func TestHiddenDirectoryRules(t *testing.T) {
 	}
 	f := useAgentDirs(ft.s)
 	f.set(t, "mac", proto.HiddenAgentDir{Pattern: "/work/*", Enabled: true}, proto.HiddenAgentDir{Pattern: "~/.automation", Enabled: true},
-		proto.HiddenAgentDir{Pattern: "*multiremi*", Enabled: true})
+		proto.HiddenAgentDir{Pattern: "*botfarm*", Enabled: true})
 	for _, agent := range []string{"claude", "codex", "pi"} {
 		c := proto.Session{SessionID: "ambient", Cwd: "/work/a/src", Agent: agent, StartedByPersona: true}
 		if !ft.s.hiddenByDirectory("mac", c) || ft.s.hiddenByDirectory("other", c) {
@@ -95,7 +95,7 @@ func TestHiddenDirectoryRules(t *testing.T) {
 	for cwd, want := range map[string]bool{
 		"/home/u/.automation/job/1":              true, // ~ is that computer's home
 		"/home/u/.automation-copy":               false,
-		"/home/u/.remi/multiremi/workspaces/x/y": true, // a folder name glob anywhere in the path
+		"/home/u/.bots/botfarm/workspaces/x/y": true, // a folder name glob anywhere in the path
 		"/work":                                  false,
 		"/code/app":                              false,
 		"":                                       false,
@@ -237,28 +237,28 @@ func TestHiddenDirectoryHomeThroughLink(t *testing.T) {
 	ft.d.machines["mac"].homeReal = "/data/home/u"
 	ft.d.mu.Unlock()
 	f := useAgentDirs(ft.s)
-	f.set(t, "mac", proto.HiddenAgentDir{Pattern: "~/.remi/multiremi/*", Enabled: true}, proto.HiddenAgentDir{Pattern: "~/.remi/multiremi", Enabled: true})
+	f.set(t, "mac", proto.HiddenAgentDir{Pattern: "~/.bots/botfarm/*", Enabled: true}, proto.HiddenAgentDir{Pattern: "~/.bots/botfarm", Enabled: true})
 	ft.d.setSessions("mac", []proto.Session{
-		{SessionID: "remi-real", Agent: "codex", Cwd: "/data/home/u/.remi/multiremi/workspaces/w1", Title: "Remi resolved", Status: proto.StatusWorking, UpdatedAt: time.Now()},
-		{SessionID: "remi-link", Agent: "claude", Cwd: "/home/u/.remi/multiremi/workspaces/w2", Title: "Remi linked", Status: proto.StatusWorking, UpdatedAt: time.Now()},
+		{SessionID: "bot-real", Agent: "codex", Cwd: "/data/home/u/.bots/botfarm/workspaces/w1", Title: "Farm resolved", Status: proto.StatusWorking, UpdatedAt: time.Now()},
+		{SessionID: "bot-link", Agent: "claude", Cwd: "/home/u/.bots/botfarm/workspaces/w2", Title: "Farm linked", Status: proto.StatusWorking, UpdatedAt: time.Now()},
 		{SessionID: "mine", Agent: "codex", Cwd: "/data/home/u/code/app", Title: "Visible work", Status: proto.StatusWorking, UpdatedAt: time.Now()},
 	})
-	for sid, want := range map[string]bool{"remi-real": true, "remi-link": true, "mine": false} {
+	for sid, want := range map[string]bool{"bot-real": true, "bot-link": true, "mine": false} {
 		if got := ft.s.directoryHiddenSession("mac", sid); got != want {
 			t.Errorf("%s hidden=%v", sid, got)
 		}
 	}
-	if got := ft.s.describeAgents(context.Background(), "all", "", ""); strings.Contains(got, "Remi") || !strings.Contains(got, "Visible work") {
+	if got := ft.s.describeAgents(context.Background(), "all", "", ""); strings.Contains(got, "Farm") || !strings.Contains(got, "Visible work") {
 		t.Fatalf("agents_list: %s", got)
 	}
 	got := settingsTool(ft.s, `{"action":"get","key":"agents.hidden_dirs"}`)
-	if got.IsError || !strings.Contains(got.Content[0].Text, "~/.remi/multiremi/* (hide, on; matches 2 sessions)") ||
-		!strings.Contains(got.Content[0].Text, "~/.remi/multiremi (hide, on; matches 2 sessions)") {
+	if got.IsError || !strings.Contains(got.Content[0].Text, "~/.bots/botfarm/* (hide, on; matches 2 sessions)") ||
+		!strings.Contains(got.Content[0].Text, "~/.bots/botfarm (hide, on; matches 2 sessions)") {
 		t.Fatalf("get: %+v", got)
 	}
 	// A rule written with the followed path hides the folder named through the link too.
-	f.set(t, "mac", proto.HiddenAgentDir{Pattern: "/data/home/u/.remi", Enabled: true})
-	if !ft.s.directoryHiddenSession("mac", "remi-link") || ft.s.directoryHiddenSession("mac", "mine") {
+	f.set(t, "mac", proto.HiddenAgentDir{Pattern: "/data/home/u/.bots", Enabled: true})
+	if !ft.s.directoryHiddenSession("mac", "bot-link") || ft.s.directoryHiddenSession("mac", "mine") {
 		t.Fatal("a rule on the followed path")
 	}
 }
