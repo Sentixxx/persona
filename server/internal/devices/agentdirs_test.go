@@ -136,24 +136,24 @@ func TestBlockedAgentDirsReachTheNode(t *testing.T) {
 		}
 		return out
 	}
-	code, _ := put(t, mux, "/api/v1/machines/m1/agent-dirs/hidden", `{"rules":[{"pattern":"~/.remi/multiremi","enabled":true,"action":"block"},{"pattern":"/scratch","enabled":true,"action":"hide"},{"pattern":"/off","enabled":false,"action":"block"}]}`)
+	code, _ := put(t, mux, "/api/v1/machines/m1/agent-dirs/hidden", `{"rules":[{"pattern":"~/.bots/runs","enabled":true,"action":"block"},{"pattern":"/scratch","enabled":true,"action":"hide"},{"pattern":"/off","enabled":false,"action":"block"}]}`)
 	if code != 200 {
 		t.Fatal(code)
 	}
 	eventually(t, 5*time.Second, "the node told the blocking patterns", func() bool {
 		got := told()
-		return len(got) == 1 && slices.Equal(got[0], []string{"~/.remi/multiremi"})
+		return len(got) == 1 && slices.Equal(got[0], []string{"~/.bots/runs"})
 	})
 	var stored []proto.HiddenAgentDir
 	if _, err := st.Setting(context.Background(), hiddenAgentDirsKey("m1"), &stored); err != nil || stored[0].Action != proto.AgentDirBlock {
 		t.Fatalf("stored %+v %v", stored, err)
 	}
 	// Only a hide rule switched off: the node's patterns are the same, it is not told again.
-	if code, _ := put(t, mux, "/api/v1/machines/m1/agent-dirs/hidden", `{"rules":[{"pattern":"~/.remi/multiremi","enabled":true,"action":"block"},{"pattern":"/scratch","enabled":false,"action":"hide"},{"pattern":"/off","enabled":false,"action":"block"}]}`); code != 200 {
+	if code, _ := put(t, mux, "/api/v1/machines/m1/agent-dirs/hidden", `{"rules":[{"pattern":"~/.bots/runs","enabled":true,"action":"block"},{"pattern":"/scratch","enabled":false,"action":"hide"},{"pattern":"/off","enabled":false,"action":"block"}]}`); code != 200 {
 		t.Fatal(code)
 	}
 	// Switching the rule to hide unblocks it on the node.
-	if code, _ := put(t, mux, "/api/v1/machines/m1/agent-dirs/hidden", `{"rules":[{"pattern":"~/.remi/multiremi","enabled":true,"action":"hide"}]}`); code != 200 {
+	if code, _ := put(t, mux, "/api/v1/machines/m1/agent-dirs/hidden", `{"rules":[{"pattern":"~/.bots/runs","enabled":true,"action":"hide"}]}`); code != 200 {
 		t.Fatal(code)
 	}
 	eventually(t, 5*time.Second, "the node told it is unblocked", func() bool {

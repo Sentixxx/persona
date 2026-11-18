@@ -25,19 +25,19 @@ func TestBlockedAgentDirMatchesSymlinkedHome(t *testing.T) {
 	if err := os.Symlink(real, link); err != nil {
 		t.Fatal(err)
 	}
-	work := filepath.Join(real, ".remi", "multiremi", "workspaces", "w1")
+	work := filepath.Join(real, ".bots", "runs", "workspaces", "w1")
 	if err := os.MkdirAll(work, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	n := &Node{home: link, logger: log.New(io.Discard, "", 0)}
-	n.setBlockedAgentDirs([]string{"~/.remi/multiremi/*", " ~/.remi/multiremi/* ", "relative"})
-	if !slices.Equal(n.agentDirsBlocked, []string{"~/.remi/multiremi/*"}) {
+	n.setBlockedAgentDirs([]string{"~/.bots/runs/*", " ~/.bots/runs/* ", "relative"})
+	if !slices.Equal(n.agentDirsBlocked, []string{"~/.bots/runs/*"}) {
 		t.Fatalf("patterns kept %v", n.agentDirsBlocked)
 	}
 	for dir, want := range map[string]bool{
 		work: true, // the link followed
-		filepath.Join(link, ".remi", "multiremi", "workspaces", "w1"): true, // through the link
-		"~/.remi/multiremi/workspaces/w2":                             true,
+		filepath.Join(link, ".bots", "runs", "workspaces", "w1"): true, // through the link
+		"~/.bots/runs/workspaces/w2":                             true,
 		filepath.Join(real, "code", "app"):                            false,
 		"":                                                            false,
 	} {

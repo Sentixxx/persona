@@ -285,18 +285,18 @@ func TestAgentDirSettingAction(t *testing.T) {
 		rules, _, _ := f.HiddenAgentDirs(ctx, "mac")
 		return change.cardText(i18n.En), rules
 	}
-	card, rules := apply(`{"machine":"mac","pattern":"~/.remi/multiremi"}`)
-	if !slices.Equal(rules, []proto.HiddenAgentDir{{Pattern: "~/.remi/multiremi", Enabled: true, Action: proto.AgentDirBlock}}) || !strings.HasPrefix(card, "Block") {
+	card, rules := apply(`{"machine":"mac","pattern":"~/.bots/runs"}`)
+	if !slices.Equal(rules, []proto.HiddenAgentDir{{Pattern: "~/.bots/runs", Enabled: true, Action: proto.AgentDirBlock}}) || !strings.HasPrefix(card, "Block") {
 		t.Fatalf("a new rule: %q %+v", card, rules)
 	}
-	if card, _ = apply(`{"machine":"mac","pattern":"~/.remi/multiremi","enabled":false}`); !strings.Contains(card, "Switch off") {
+	if card, _ = apply(`{"machine":"mac","pattern":"~/.bots/runs","enabled":false}`); !strings.Contains(card, "Switch off") {
 		t.Fatalf("switch off keeps the action: %q", card)
 	}
-	card, rules = apply(`{"machine":"mac","pattern":"~/.remi/multiremi","action":"hide"}`)
-	if !slices.Equal(rules, []proto.HiddenAgentDir{{Pattern: "~/.remi/multiremi", Enabled: true, Action: proto.AgentDirHide}}) || !strings.Contains(card, "to Hide") {
+	card, rules = apply(`{"machine":"mac","pattern":"~/.bots/runs","action":"hide"}`)
+	if !slices.Equal(rules, []proto.HiddenAgentDir{{Pattern: "~/.bots/runs", Enabled: true, Action: proto.AgentDirHide}}) || !strings.Contains(card, "to Hide") {
 		t.Fatalf("to hide: %q %+v", card, rules)
 	}
-	if card, _ = apply(`{"machine":"mac","pattern":"~/.remi/multiremi"}`); !strings.Contains(card, "already") || !strings.Contains(card, "hide, on") {
+	if card, _ = apply(`{"machine":"mac","pattern":"~/.bots/runs"}`); !strings.Contains(card, "already") || !strings.Contains(card, "hide, on") {
 		t.Fatalf("no action given keeps hide: %q", card)
 	}
 	if card, rules = apply(`{"machine":"mac","pattern":"/scratch","action":"hide"}`); !strings.HasPrefix(card, "Hide") || rules[1].Action != proto.AgentDirHide {
