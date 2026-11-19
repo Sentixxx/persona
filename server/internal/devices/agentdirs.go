@@ -150,16 +150,15 @@ func (d *Devices) EditHiddenAgentDirs(ctx context.Context, id string, edit func(
 	return m.editHiddenAgentDirs(ctx, edit)
 }
 
-// blockedAgentDirsParam is node.configure's agent_dirs_blocked: the patterns of the rules that block, never null. A
-// failed read sends what was last known rather than unblocking everything.
+// blockedAgentDirsParam is node.configure's agent_dirs_blocked: the patterns of the rules that block ([] when none
+// do, which clears the node's list). nil (null on the wire) when the rules cannot be read: the node then keeps the
+// list it has, across restarts too, rather than unblocking every folder. Once read, the rules are cached and only
+// this manager changes them, so a read can only fail before the first one succeeded.
 func (m *Machine) blockedAgentDirsParam(ctx context.Context) []string {
 	rules, err := m.hiddenAgentDirs(ctx)
 	if err != nil {
-		m.d.logf("[%s] agent folder rules for the node: %v", m.cfg.ID, err)
-		c := &m.hiddenDirs
-		c.mu.Lock()
-		defer c.mu.Unlock()
-		return proto.BlockedAgentDirPatterns(c.rules)
+		m.d.logf("[%s] agent folder rules for the node: %v (the node keeps its blocked folders)", m.cfg.ID, err)
+		return nil
 	}
 	return proto.BlockedAgentDirPatterns(rules)
 }

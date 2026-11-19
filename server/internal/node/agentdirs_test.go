@@ -141,3 +141,25 @@ func TestBlockedAgentDirClaudeHook(t *testing.T) {
 		return slices.Contains(hub.events, "hook.event")
 	})
 }
+
+// node.configure as the manager sends it: agent_dirs_blocked null (the manager could not read its rules) or absent
+// leaves the node's blocks as they are; a list, the empty one included, replaces them.
+func TestBlockedAgentDirsConfigureNullKeepsBlocks(t *testing.T) {
+	n, _ := testNode(t)
+	n.setBlockedAgentDirs([]string{"/w/bot"})
+	for _, params := range []map[string]any{{"agent_dirs_blocked": nil}, {"machine_id": "m1"}} {
+		if _, err := request(t, n, "node.configure", params); err != nil {
+			t.Fatal(err)
+		}
+		if !n.agentDirBlocked("/w/bot/run-1") {
+			t.Fatalf("node.configure %v unblocked the node", params)
+		}
+	}
+	if _, err := request(t, n, "node.configure", map[string]any{"agent_dirs_blocked": []string{}}); err != nil {
+		t.Fatal(err)
+	}
+	if n.agentDirBlocked("/w/bot/run-1") {
+		t.Fatal("an empty list did not clear the blocks")
+	}
+}
+
