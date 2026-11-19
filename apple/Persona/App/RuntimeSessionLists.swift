@@ -102,6 +102,7 @@ import Observation
                 // landing filtered it out (#8748); an unfiltered landing still drops a missing row.
                 let filter = list.query.manager.isEmpty ? nil : list.query.manager
                 model.landCompleteSessionList(rows, group: group, manager: filter)
+                model.rememberListedRows(group) // the whole collection now: no paging rows stand for it
             }
             // Whether the list is a window or the whole collection decides where the switcher's counts come from.
             if group == model.hub?.group { model.followNeedsYou() }
@@ -286,6 +287,7 @@ import Observation
         sections = [:]
         aggregates = [:]
         bases = [:]
+        model?.forgetListedRows() // an older pairing's or query's rows are no hub's list any more
         model = nil
     }
 }

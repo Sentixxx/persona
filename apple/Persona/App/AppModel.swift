@@ -266,6 +266,8 @@ final class AppModel {
     @ObservationIgnored private var cardSessionsListed: Set<SessionKey> = []
     /// Each paging hub's list rows as last landed (`rememberListedRows`): what stands while its list reloads.
     @ObservationIgnored private var lastListedRows: [String: [SessionKey: Session]] = [:]
+    /// Watched sessions an exact lookup found the hub no longer has: a kept row of one is not counted as waiting.
+    @ObservationIgnored private var cardSessionsGone: Set<SessionKey> = []
 
     /// The rows a paging hub's lists hold now (the Agents list and its sections), nil where the list is the whole
     /// collection. A row kept in `sessionIndex` from an earlier page or an opened chat is not refreshed when the list
@@ -283,6 +285,14 @@ final class AppModel {
     func rememberListedRows(_ group: String) {
         guard let list = sessionLists.lists[group], list.loaded else { return }
         lastListedRows[group] = currentListedRows(group)
+    }
+
+    func forgetListedRows() { lastListedRows = [:] }
+
+    /// Kept rows as the counts read them for waiting sessions: through the cards' resolver, without the ones the hub no
+    /// longer has or that are directory-hidden.
+    func waitingRows(_ rows: [Session], reading session: (SessionKey) -> Session?) -> [Session] {
+        rows.compactMap { cardSessionsGone.contains($0.key) ? nil : session($0.key) ?? $0 }.filter { $0.hiddenByDirectory != true }
     }
 
     private func currentListedRows(_ group: String) -> [SessionKey: Session]? {
@@ -348,6 +358,7 @@ final class AppModel {
             if cardLookupsOut.contains(key) { cardLookupsStale.insert(key) } else { cardLookups[key] = CardLookup(nextAt: cardLookups[key]?.nextAt ?? .distantPast) }
         }
         cardSessionsListed = nowListed
+        cardSessionsGone = cardSessionsGone.filter { keys.contains($0) && !nowListed.contains($0) }
         let now = Date()
         var wake: Date?
         for key in keys where cardLookupsOut.count < 4 && !cardLookupsOut.contains(key) && !nowListed.contains(key) {
@@ -366,6 +377,7 @@ final class AppModel {
                 if let answer {
                     self.cardLookups[key] = CardLookup(answered: !stale, nextAt: Date().addingTimeInterval(5))
                     self.cardSessionRows[key] = answer
+                    if answer == nil { self.cardSessionsGone.insert(key) } else { self.cardSessionsGone.remove(key) }
                     self.countBadges()
                 } else {
                     var failed = self.cardLookups[key] ?? CardLookup()
@@ -4687,8 +4699,8 @@ final class AppModel {
         // Agents counts what its Needs You section lists: one per session that waits for the user, not one per card.
         // A kept row of a session the paging list has since left out (hidden) is not one waiting: read through the same
         // projection as its cards.
-        let waitingRows = scoped(allSessions).map { session($0.key) ?? $0 }.filter { $0.hiddenByDirectory != true }
-        b.agents = AgentsNeedsYou.badge(AgentsNeedsYou.rows(cards: scopedInteractions, waiting: AgentsNeedsYou.waiting(waitingRows)),
+        let waitingNow = waitingRows(scoped(allSessions), reading: session)
+        b.agents = AgentsNeedsYou.badge(AgentsNeedsYou.rows(cards: scopedInteractions, waiting: AgentsNeedsYou.waiting(waitingNow)),
                                         place: place)
         if b != badges { badges = b }
         let waiting = waitingAgents()
@@ -4703,7 +4715,7 @@ final class AppModel {
         let rows = needsYou.flatMap { $0.group == group ? $0.rows : nil } ?? allSessions
         // The cards and their sessions as the pages and the tab badges read them (`directoryVisibleInteractions`).
         let resolve = cardSessionResolver()
-        return AssistantBadges.waiting(roster: roster, group: group, sessions: rows.map { resolve($0.key) ?? $0 },
+        return AssistantBadges.waiting(roster: roster, group: group, sessions: waitingRows(rows, reading: resolve),
                                        interactions: directoryVisibleInteractions(reading: resolve),
                                        known: resolve) { key, session in
             if session?.hiddenByDirectory == true || resolve(key)?.hiddenByDirectory == true { return false }
