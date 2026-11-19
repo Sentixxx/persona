@@ -295,8 +295,11 @@ final class AppModel {
         rows.compactMap { cardSessionsGone.contains($0.key) ? nil : session($0.key) ?? $0 }.filter { $0.hiddenByDirectory != true }
     }
 
+    /// The rows a hub that leaves directory-hidden sessions out of its lists (`sessions_list`) holds in them now: a
+    /// window of pages, or a complete copy read in full (`query.legacy`, the repository grouping). nil for an older hub,
+    /// whose complete lists annotate hidden rows instead.
     private func currentListedRows(_ group: String) -> [SessionKey: Session]? {
-        guard let list = sessionLists.lists[group], list.paged else { return nil }
+        guard let list = sessionLists.lists[group], list.paged || list.loaded && features(group).contains("sessions_list") else { return nil }
         var rows: [SessionKey: Session] = [:]
         for row in list.rows where rows[row.key] == nil { rows[row.key] = row }
         for (scope, page) in sessionLists.sections where scope.hub == group {
