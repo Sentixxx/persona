@@ -318,7 +318,7 @@ final class AppModel {
     /// again only about answers older than 30 s.
     private func cardSessionsListChanged(_ group: String, _ changes: SessionListChanges?) {
         let now = Date()
-        for key in cardLookupsOut where key.group == group && (changes?.names(key) ?? true) { cardLookupsStale.insert(key) }
+        for key in cardLookupsOut where key.group == group && changes?.names(key) == true { cardLookupsStale.insert(key) }
         var stale = false
         for (key, lookup) in cardLookups where key.group == group && (lookup.answered || lookup.tries > 0) {
             // an answer's nextAt is 5 s after it came
