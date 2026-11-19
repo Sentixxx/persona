@@ -5519,7 +5519,8 @@ returns the new state; an answer-only device cannot call it. Offline computers c
 `filepath.Match` glob starting with `/` or `~/` (`~` is that computer's home, never the manager's; until it is
 known a `~/` rule does not match), or a folder name glob starting with `*` (`*botfarm*`) that matches a folder of
 that name anywhere in the path. A rule matches the folder and everything under it. Trailing slashes are dropped;
-patterns that would cover home or the root, invalid globs, duplicates and more than 100 rules are refused (400).
+patterns that would cover home or the root, or that every folder matches (`*`, `/*`), invalid globs, duplicates and
+more than 100 rules are refused (400).
 Matching is lexical and case-sensitive; symlinks on the remote computer are not resolved. Empty is the default.
 
 `persona_settings` `agents.hidden_dirs` takes the same values as `agents.blocked_claude_dirs`: `add`
