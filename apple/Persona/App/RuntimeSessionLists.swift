@@ -304,7 +304,10 @@ extension AppModel {
         let old = allSessions.filter { $0.group == group }
         let index = Dictionary(old.map { ($0.key, $0) }, uniquingKeysWith: { a, _ in a })
         let incoming = rows.map { $0.preservingDetails(from: index[$0.key]) }
-        applySessions(Dictionary(grouping: Self.merging(incoming, into: old), by: \.machineRef))
+        if !heldRetryReceipts.isEmpty {
+            reconcileHeldRetries(Dictionary(grouping: rows.filter { $0.undelivered != nil }, by: \.machineRef))
+        }
+        applySessions(Dictionary(grouping: Self.merging(incoming, into: old), by: \.machineRef), complete: false)
         // The lists' rows changed: a pending card's session they no longer hold is looked up (hidden, or off the page),
         // and the counts read the cards again.
         rememberListedRows(group)
