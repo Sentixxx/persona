@@ -188,7 +188,20 @@ func (d *Devices) putHiddenAgentDirs(w http.ResponseWriter, r *http.Request, m *
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("bad body: %w", err))
 		return
 	}
-	rules, err := m.editHiddenAgentDirs(r.Context(), func([]proto.HiddenAgentDir) ([]proto.HiddenAgentDir, error) { return in.Rules, nil })
+	rules, err := m.editHiddenAgentDirs(r.Context(), func(now []proto.HiddenAgentDir) ([]proto.HiddenAgentDir, error) {
+		// An app from before blocking sends no actions: a rule it lists that exists keeps its own, so switching
+		// another rule there does not turn blocks into hides. A new rule without one hides, as it did then.
+		for i, rule := range in.Rules {
+			if rule.Action != "" {
+				continue
+			}
+			p, _ := proto.CleanDirPattern(rule.Pattern)
+			if j := slices.IndexFunc(now, func(o proto.HiddenAgentDir) bool { return o.Pattern == p }); j >= 0 {
+				in.Rules[i].Action = now[j].Action
+			}
+		}
+		return in.Rules, nil
+	})
 	if err != nil {
 		code := http.StatusInternalServerError
 		if errors.Is(err, errBadPattern) {

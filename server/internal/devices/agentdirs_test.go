@@ -217,3 +217,32 @@ func TestBlockedAgentDirsColdReadFailureKeepsTheNodesBlocks(t *testing.T) {
 	}
 }
 
+// An app from before blocking sends its whole list without actions. A rule it lists that already exists keeps its
+// action: switching another rule from such an app must not turn every block into a hide (the node would start
+// collecting those folders again). A new rule from it hides, as before blocking.
+func TestHiddenAgentDirsPutWithoutActionKeepsBlocks(t *testing.T) {
+	_, st, _, mux, _ := hiddenDirsHub(t)
+	if code, _ := put(t, mux, "/api/v1/machines/m1/agent-dirs/hidden", `{"rules":[{"pattern":"~/.bots/runs","enabled":true,"action":"block"},{"pattern":"/scratch","enabled":true,"action":"hide"}]}`); code != 200 {
+		t.Fatal(code)
+	}
+	// The older app switches /scratch off and adds /new, sending no action at all.
+	if code, _ := put(t, mux, "/api/v1/machines/m1/agent-dirs/hidden", `{"rules":[{"pattern":"~/.bots/runs/","enabled":true},{"pattern":"/scratch","enabled":false},{"pattern":"/new","enabled":true}]}`); code != 200 {
+		t.Fatal(code)
+	}
+	var stored []proto.HiddenAgentDir
+	if _, err := st.Setting(context.Background(), hiddenAgentDirsKey("m1"), &stored); err != nil {
+		t.Fatal(err)
+	}
+	want := []proto.HiddenAgentDir{{Pattern: "~/.bots/runs", Enabled: true, Action: proto.AgentDirBlock},
+		{Pattern: "/scratch", Enabled: false, Action: proto.AgentDirHide}, {Pattern: "/new", Enabled: true, Action: proto.AgentDirHide}}
+	if !slices.Equal(stored, want) {
+		t.Fatalf("stored %+v, want %+v", stored, want)
+	}
+	// An app that names the action still switches it.
+	if code, _ := put(t, mux, "/api/v1/machines/m1/agent-dirs/hidden", `{"rules":[{"pattern":"~/.bots/runs","enabled":true,"action":"hide"}]}`); code != 200 {
+		t.Fatal(code)
+	}
+	if _, err := st.Setting(context.Background(), hiddenAgentDirsKey("m1"), &stored); err != nil || stored[0].Action != proto.AgentDirHide {
+		t.Fatalf("an explicit action: %+v %v", stored, err)
+	}
+}
