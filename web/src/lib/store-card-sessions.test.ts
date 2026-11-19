@@ -29,6 +29,9 @@ let listRows: Session[] | null;
 let listDelta: { sessions: Session[]; remove: string[] };
 let listRevision: number;
 let lookupFailures: number;
+// Exact lookups held open until the test answers them (with the rows the hub had when each was asked).
+let holdLookups: number;
+let heldLookups: ((rows: Session[]) => void)[];
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -38,6 +41,8 @@ beforeEach(() => {
   listDelta = { sessions: [], remove: [] };
   listRevision = 1;
   lookupFailures = 0;
+  holdLookups = 0;
+  heldLookups = [];
   vi.stubGlobal("WebSocket", Socket);
   vi.stubGlobal("location", { protocol: "http:", host: "demo" });
   vi.stubGlobal("localStorage", { getItem: () => "demo-token" });
@@ -47,6 +52,10 @@ beforeEach(() => {
     if (url.pathname === "/api/v1/sessions" && url.searchParams.has("session_id")) {
       lookups.push(url);
       if (lookupFailures > 0) { lookupFailures--; return Response.json({ error: "busy" }, { status: 500 }); }
+      if (holdLookups > 0) {
+        holdLookups--;
+        return new Promise<Response>((resolve) => heldLookups.push((sessions) => resolve(Response.json({ sessions, remove: [], total: sessions.length, has_more: false, revision: "r1" }))));
+      }
       const sessions = exactRows.filter((s) => s.machine_id === url.searchParams.get("machine_id") && s.session_id === url.searchParams.get("session_id"));
       return Response.json({ sessions, remove: [], total: sessions.length, has_more: false, revision: "r1" });
     }
@@ -236,6 +245,43 @@ describe("directory-hidden cards on a paging hub", () => {
     expect(new Set(lookups.map((u) => u.searchParams.get("session_id"))).size).toBe(25);
     expect(getState().interactions).toHaveLength(25);
     expect(visibleIds()).toEqual([]);
+  });
+
+  // #8584: an exact lookup asked before a list change of its session can answer after it; that older answer must not
+  // stand over the change, or the card keeps the visibility it had before (hide / unhide) until a reconnect.
+  it("does not let a lookup asked before a hide stand over the list's removal", async () => {
+    exactRows = [rootSession];
+    holdLookups = 1;
+    await pagingHub([]);
+    Socket.last.push({ type: "interaction", interaction: rootCard });
+    await settle();
+    expect(heldLookups).toHaveLength(1);
+
+    exactRows = [{ ...rootSession, hidden_by_directory: true }];
+    listDelta = { sessions: [], remove: [offPage] };
+    await listChanged();
+    heldLookups[0]([rootSession]); // the answer from before the hide lands now
+    await settle();
+    expect(lookups).toHaveLength(2); // asked again: the answer predates the change
+    expect(visibleIds()).toEqual([]);
+  });
+
+  it("does not let a lookup asked before an unhide stand over the list's newer row", async () => {
+    // fifty newer rows fill the list's first page, so the session's row stays off it
+    const newer = Array.from({ length: 50 }, (_, i) => summary({ ...rootSession, session_id: `newer-${i}`, updated_at: "2026-02-01T00:00:00Z" }));
+    exactRows = [{ ...rootSession, hidden_by_directory: true }];
+    holdLookups = 1;
+    await pagingHub(newer);
+    Socket.last.push({ type: "interaction", interaction: rootCard });
+    await settle();
+    expect(heldLookups).toHaveLength(1);
+
+    exactRows = [rootSession];
+    listDelta = { sessions: [summary(rootSession)], remove: [] };
+    await listChanged();
+    heldLookups[0]([{ ...rootSession, hidden_by_directory: true }]); // the answer from before the unhide
+    await settle();
+    expect(visibleIds()).toEqual([rootCard.id]);
   });
 
   it("retries a failed lookup with backoff, a bounded number of times", async () => {

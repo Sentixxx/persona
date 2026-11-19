@@ -2,6 +2,7 @@ package assistant
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -233,5 +234,69 @@ func TestHiddenDirectorySettingCountsOnlyHiddenSessions(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Errorf("want %q in:\n%s", want, text)
 		}
+	}
+}
+
+// A standing authorization still answers a card from a directory-hidden session (an open task no one supervises, so
+// the folder rule hides it): hiding changes what is shown, never what is approved. A card no grant covers stays
+// pending and is kept for the hidden session's own page, out of the user-visible routing.
+func TestHiddenDirectoryKeepsStandingApproval(t *testing.T) {
+	for _, covered := range []bool{true, false} {
+		t.Run(map[bool]string{true: "covered", false: "not_covered"}[covered], func(t *testing.T) {
+			database := taskRecoveryDatabase(t)
+			e := newRouteEnv(t, database, true)
+			t.Cleanup(func() { settleService(t, e.s) })
+			grant := routeStandingGrant()
+			grant.Actions, grant.Reversible = []string{"merge"}, true
+			if covered {
+				saveDispatchAuthorizations(t, database, grant)
+			}
+			agents := append([]proto.Session(nil), e.agents...)
+			agents[0].Cwd = "/code/app"
+			e.sessions("mac", agents...)
+			e.f.setSessions("mac", agents...)
+			e.s.todos.mu.Lock()
+			e.s.todos.todos[e.todo.ID].Supervision = nil // the task is open, but no one supervises it
+			e.s.todos.mu.Unlock()
+			hideExposureDirectory(e.s, "mac", "/code/app")
+			if !e.s.directoryHiddenSession("mac", agents[0].SessionID) {
+				t.Fatal("setup: the session is not directory-hidden")
+			}
+			ix := askQuestion("standing-hidden", agents[0].SessionID)
+			ix.Questions[0].Question = "Merge?"
+			ix.Questions[0].Options = []proto.QuestionOption{{Label: "Continue"}, {Label: "Not now"}}
+			ix.ToolInput, _ = json.Marshal(map[string]any{"questions": ix.Questions})
+			p := &pending{ix: ix, done: make(chan proto.Resolution, 1)}
+			putPending(e.s, p)
+			e.s.record(ix)
+			e.s.announce(ix)
+			record, err := database.InteractionRecord(t.Context(), ix.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if covered {
+				select {
+				case answer := <-p.done:
+					if answer.AnsweredBy != proto.AnsweredByAssistant || !strings.Contains(answer.Reason, grant.ID) {
+						t.Fatalf("answer lacks authority: %+v", answer)
+					}
+				default:
+					t.Fatal("a standing authorization did not answer a hidden session's card")
+				}
+				if record.Status != "resolved" {
+					t.Fatalf("outcome: %+v", record)
+				}
+				return
+			}
+			if record.Status != "pending" {
+				t.Fatalf("uncovered card changed: %+v", record)
+			}
+			if _, ok := e.s.pendingIx(ix.ID); !ok {
+				t.Fatal("hidden card left the inventory")
+			}
+			if e.pushesOf(ix.ID) != 0 || len(e.s.heldAsks(e.todo.ID, "lead1")) != 0 {
+				t.Fatal("a hidden session's card was routed to the user or a supervisor")
+			}
+		})
 	}
 }

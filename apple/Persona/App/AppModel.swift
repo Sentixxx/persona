@@ -260,9 +260,45 @@ final class AppModel {
     @ObservationIgnored private var cardLookupWake: (at: Date, task: Task<Void, Never>)?
     /// Lookups out when a list hint named their session: their answer may be older than the hint, so they ask again.
     @ObservationIgnored private var cardLookupsStale: Set<SessionKey> = []
+    /// Card sessions a paging hub's lists held at the last pass: one that leaves them (hidden, or off the page) is asked
+    /// about again.
+    @ObservationIgnored private var cardSessionsListed: Set<SessionKey> = []
 
-    /// The session a pending card is shown by: the list's row, else its card's exact lookup.
-    func cardSession(_ key: SessionKey) -> Session? { latest(key) ?? cardSessionRows[key] }
+    /// The rows a paging hub's lists hold now (the Agents list and its sections), nil where the list is the whole
+    /// collection. A row kept in `sessionIndex` from an earlier page or an opened chat is not refreshed when the list
+    /// leaves it out, so it does not say whether that session is hidden now.
+    private func listedSessionRows(_ group: String) -> [SessionKey: Session]? {
+        guard let list = sessionLists.lists[group], list.paged else { return nil }
+        var rows: [SessionKey: Session] = [:]
+        for row in list.rows where rows[row.key] == nil { rows[row.key] = row }
+        for (scope, page) in sessionLists.sections where scope.hub == group {
+            for row in page.rows where rows[row.key] == nil { rows[row.key] = row }
+        }
+        return rows
+    }
+
+    /// Which session a pending card is shown by, for the pages, counts and badges alike: on a paging hub the lists'
+    /// current row, else the card's exact lookup, else a kept row; elsewhere the app's row, else the lookup. Made once
+    /// for a pass over many cards (each paging hub's rows are read once).
+    func cardSessionResolver() -> (SessionKey) -> Session? {
+        var listed: [String: [SessionKey: Session]] = [:]
+        var read: Set<String> = []
+        return { [self] key in
+            if read.insert(key.group).inserted, let rows = listedSessionRows(key.group) { listed[key.group] = rows }
+            guard let rows = listed[key.group] else { return latest(key) ?? cardSessionRows[key] }
+            return rows[key] ?? cardSessionRows[key] ?? latest(key)
+        }
+    }
+
+    /// The session one pending card is shown by (`cardSessionResolver`).
+    func cardSession(_ key: SessionKey) -> Session? { cardSessionResolver()(key) }
+
+    /// The pending cards whose session is not directory-hidden, oldest first: what the pages of cards and every count
+    /// start from.
+    var directoryVisibleInteractions: [Interaction] {
+        let session = cardSessionResolver()
+        return pendingInteractions.filter { session($0.sessionKey)?.hiddenByDirectory != true }
+    }
 
     private var pendingCardSessions: Set<SessionKey> {
         Set(interactions.values.lazy.filter { !$0.isSessionless }.map(\.sessionKey))
@@ -271,14 +307,25 @@ final class AppModel {
     /// Asks for the rows of pending cards' sessions that no list holds, four at a time until each is answered (a
     /// session the hub does not have is an answer too). A failed one is asked again after 1, 2, 4 s, then left as it
     /// is until a list hint names it. Answers for cards that are gone go with them.
-    private func lookUpCardSessions() {
+    func lookUpCardSessions() {
         let keys = pendingCardSessions
         if cardSessionRows.keys.contains(where: { !keys.contains($0) }) { cardSessionRows = cardSessionRows.filter { keys.contains($0.key) } }
         cardLookups = cardLookups.filter { keys.contains($0.key) }
+        var listed: [String: Set<SessionKey>] = [:]
+        for group in Set(keys.map(\.group)) {
+            if let rows = listedSessionRows(group) { listed[group] = Set(rows.keys) }
+        }
+        let nowListed = keys.filter { listed[$0.group]?.contains($0) == true }
+        // Left the lists since the last pass (hidden, or off the page): whatever an earlier lookup said, ask again; one
+        // out now may answer from before, so it asks again when it lands.
+        for key in cardSessionsListed.subtracting(nowListed) where keys.contains(key) {
+            if cardLookupsOut.contains(key) { cardLookupsStale.insert(key) } else { cardLookups[key] = nil }
+        }
+        cardSessionsListed = nowListed
         let now = Date()
         var wake: Date?
-        for key in keys where cardLookupsOut.count < 4 && !cardLookupsOut.contains(key) && latest(key) == nil {
-            guard sessionLists.lists[key.group]?.paged == true, let api = api(key.group), api.sessionLookup else { continue }
+        for key in keys where cardLookupsOut.count < 4 && !cardLookupsOut.contains(key) && !nowListed.contains(key) {
+            guard listed[key.group] != nil, let api = api(key.group), api.sessionLookup else { continue }
             let lookup = cardLookups[key] ?? CardLookup()
             if lookup.answered || lookup.tries >= 4 { continue }
             if lookup.nextAt > now { wake = min(wake ?? lookup.nextAt, lookup.nextAt); continue }
@@ -4568,8 +4615,10 @@ final class AppModel {
         func place(_ key: SessionKey) -> TabBadges.Place {
             TabBadges.place(key, session: sessionIndex[key], quiet: isQuiet(key), mutes: pinsStore(key.group)?.mutes)
         }
-        for ix in interactions.values {
-            guard scope.has(ix.manager ?? sessionIndex[ix.sessionKey]?.manager, group: ix.group) else { continue }
+        // A directory-hidden session's cards count nowhere, as the pages leave them out (`directoryVisibleInteractions`).
+        let session = cardSessionResolver()
+        for ix in interactions.values where session(ix.sessionKey)?.hiddenByDirectory != true {
+            guard scope.has(ix.manager ?? session(ix.sessionKey)?.manager, group: ix.group) else { continue }
             // A quiet task's agent asking is the main conversation's to tell (#1731): its count goes there, not on Agents.
             switch place(ix.sessionKey) {
             case .assistant, .quiet: b.assistant += 1
@@ -4577,7 +4626,10 @@ final class AppModel {
             }
         }
         // Agents counts what its Needs You section lists: one per session that waits for the user, not one per card.
-        b.agents = AgentsNeedsYou.badge(AgentsNeedsYou.rows(cards: scopedInteractions, waiting: AgentsNeedsYou.waiting(scoped(allSessions))),
+        // A kept row of a session the paging list has since left out (hidden) is not one waiting: read through the same
+        // projection as its cards.
+        let waitingRows = scoped(allSessions).filter { session($0.key)?.hiddenByDirectory != true }
+        b.agents = AgentsNeedsYou.badge(AgentsNeedsYou.rows(cards: scopedInteractions, waiting: AgentsNeedsYou.waiting(waitingRows)),
                                         place: place)
         if b != badges { badges = b }
         let waiting = waitingAgents()
@@ -4590,8 +4642,11 @@ final class AppModel {
     private func waitingAgents() -> [String: Int] {
         guard let group = hub?.group, let roster = managerRosters[group], roster.isMulti else { return [:] }
         let rows = needsYou.flatMap { $0.group == group ? $0.rows : nil } ?? allSessions
-        return AssistantBadges.waiting(roster: roster, group: group, sessions: rows, interactions: interactions.values,
-                                       known: { sessionIndex[$0] }) { key, session in
+        // The cards and their sessions as the pages and the tab badges read them (`directoryVisibleInteractions`).
+        let resolve = cardSessionResolver()
+        return AssistantBadges.waiting(roster: roster, group: group, sessions: rows, interactions: directoryVisibleInteractions,
+                                       known: resolve) { key, session in
+            if session?.hiddenByDirectory == true || resolve(key)?.hiddenByDirectory == true { return false }
             switch TabBadges.place(key, session: session, quiet: session?.quiet == true || isQuiet(key), mutes: pinsStore(key.group)?.mutes) {
             case .assistant, .agents: return true
             case .quiet, .muted: return false

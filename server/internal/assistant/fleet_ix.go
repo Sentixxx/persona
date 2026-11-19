@@ -110,11 +110,13 @@ func (s *Service) elicitationReachable(ix proto.Interaction) bool {
 // card goes to its supervisor first when leaders are configured (ask_route.go); a question the assistant may answer for
 // the user goes to it first (fleet_delegate.go).
 func (s *Service) announce(ix proto.Interaction) {
-	if s.directoryHiddenSession(ix.MachineID, ix.SessionID) {
-		s.tellApps(ix) // Retain the card for explicit inspection without routing it into Assistant context.
+	// Standing authorizations answer first, as for any session: hiding a folder changes what is shown, not what the
+	// user already approved.
+	if s.approveStandingInteraction(ix) {
 		return
 	}
-	if s.approveStandingInteraction(ix) {
+	if s.directoryHiddenSession(ix.MachineID, ix.SessionID) {
+		s.tellApps(ix) // Retain the card for explicit inspection without routing it into Assistant context.
 		return
 	}
 	if !s.agentSupervisedSession(ix.MachineID, ix.SessionID) && s.routeAsk(ix) { // a worker's card stays the user's (task_leader.go)

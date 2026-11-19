@@ -364,6 +364,9 @@ const cardRows = new Map<string, { row?: Session; fresh: boolean }>();
 /** Failed lookups: tries so far and when the next may go (backoff); after CARD_LOOKUP_TRIES a card stays as it is. */
 const cardRetries = new Map<string, { tries: number; at: number }>();
 const cardInFlight = new Set<string>();
+/** How many list changes each card's session has had (upserts and removals): a lookup asked before the latest one
+ *  answers for an older row, so its answer is dropped (#8584). */
+const cardRowVersions = new Map<string, number>();
 const CARD_LOOKUPS_AT_ONCE = 4;
 const CARD_LOOKUP_TRIES = 4;
 const CARD_RETRY_MS = 1_000;
@@ -393,16 +396,20 @@ export function cardSessionRow(mid: string, sid: string): Session | undefined {
 }
 
 /** List changes say which off-page rows changed: a changed row is that session's newest word, a removed one (hidden,
- *  ended or filtered out) is asked about again. */
+ *  ended or filtered out) is asked about again. A lookup still out for either answers for the row before the change:
+ *  its version moves, so that answer is dropped. A dropped answer is asked again only while the row is not fresh (a
+ *  removal), so each list change costs at most one more lookup. */
 function cardRowsChanged(upsert: Session[], remove: string[]) {
   let changed = false;
+  const moved = (id: string) => { cardRowVersions.set(id, (cardRowVersions.get(id) ?? 0) + 1); cardRetries.delete(id); changed = true; };
   for (const row of upsert) {
     const id = runtimeIdentity(row);
-    if (cardRows.has(id)) { cardRows.set(id, { row, fresh: true }); cardRetries.delete(id); changed = true; }
+    if (cardRows.has(id) || cardInFlight.has(id)) { cardRows.set(id, { row, fresh: true }); moved(id); }
   }
   for (const id of remove) {
     const known = cardRows.get(id);
-    if (known?.fresh) { cardRows.set(id, { ...known, fresh: false }); cardRetries.delete(id); changed = true; }
+    if (known?.fresh) cardRows.set(id, { ...known, fresh: false });
+    if (known?.fresh || cardInFlight.has(id)) moved(id);
   }
   if (changed) lookUpCardSessions(true);
 }
@@ -411,6 +418,7 @@ function forgetCardRows(stale: boolean) {
   cardGeneration++;
   cardInFlight.clear();
   cardRetries.clear();
+  cardRowVersions.clear(); // the lookups out are dropped by cardGeneration already
   clearTimeout(cardRetryTimer);
   cardRetryTimer = undefined;
   cardRowsFor = null;
@@ -433,6 +441,7 @@ function lookUpCardSessions(force = false) {
   // the answers for cards that are gone go with them
   for (const id of cardRows.keys()) if (!cards.has(id)) cardRows.delete(id);
   for (const id of cardRetries.keys()) if (!cards.has(id)) cardRetries.delete(id);
+  for (const id of cardRowVersions.keys()) if (!cards.has(id) && !cardInFlight.has(id)) cardRowVersions.delete(id);
   const now = Date.now();
   let nextRetry = Infinity;
   for (const [id, [mid, sid]] of cards) {
@@ -450,11 +459,13 @@ function lookUpCardSessions(force = false) {
 
 async function lookUpCardSession(id: string, mid: string, sid: string) {
   const generation = cardGeneration;
+  const version = cardRowVersions.get(id) ?? 0;
+  const current = () => generation === cardGeneration && version === (cardRowVersions.get(id) ?? 0);
   cardInFlight.add(id);
   const params = new URLSearchParams({ summary: "1", limit: "1", machine_id: mid, session_id: sid });
   try {
     const page = await api<{ sessions?: Session[] }>(`/sessions?${params}`);
-    if (generation !== cardGeneration) return;
+    if (!current()) return;
     const found = page?.sessions?.[0];
     const row = found && runtimeIdentity(found) === id ? found : undefined;
     cardRows.set(id, { row, fresh: true });
@@ -464,7 +475,7 @@ async function lookUpCardSession(id: string, mid: string, sid: string) {
       notify(); // what reads the card's row (can it be answered, is its folder hidden) reads it again
     }
   } catch {
-    if (generation !== cardGeneration) return;
+    if (!current()) return;
     const tries = (cardRetries.get(id)?.tries ?? 0) + 1;
     cardRetries.set(id, { tries, at: Date.now() + CARD_RETRY_MS * 2 ** (tries - 1) });
   } finally {

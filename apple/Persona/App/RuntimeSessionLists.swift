@@ -299,6 +299,10 @@ extension AppModel {
         let index = Dictionary(old.map { ($0.key, $0) }, uniquingKeysWith: { a, _ in a })
         let incoming = rows.map { $0.preservingDetails(from: index[$0.key]) }
         applySessions(Dictionary(grouping: Self.merging(incoming, into: old), by: \.machineRef))
+        // The lists' rows changed: a pending card's session they no longer hold is looked up (hidden, or off the page),
+        // and the counts read the cards again.
+        lookUpCardSessions()
+        countBadges()
     }
 
     /// `old` with each row `incoming` has replaced where it is (one copy), then the rows it did not have, in their order.

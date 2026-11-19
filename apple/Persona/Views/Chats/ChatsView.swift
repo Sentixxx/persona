@@ -1242,8 +1242,9 @@ private struct AgentsList: View {
         let pinnedAgents = projection.pinnedAgents
         // One row per session that waits for the user, its cards under it (`AgentsNeedsYou`): the section, the Needs
         // You filter and the tab's badge count these rows.
+        let cardSession = model.cardSessionResolver() // the same row for a card here as in the counts
         let waiting = AgentsNeedsYou.rows(
-            cards: AgentsNeedsYou.cards(feed.following ? feed.interactions : model.scopedInteractions, session: { session($0) ?? model.cardSessionRows[$0] },
+            cards: AgentsNeedsYou.cards(feed.following ? feed.interactions : model.scopedInteractions, session: { cardSession($0) ?? session($0) },
                                         machine: machineFilter, hub: model.isMultiHub ? hubFilter : nil),
             waiting: AgentsNeedsYou.waiting(base)) // a folded child's card sits under its parent; a subtask the hub did not fold stays its own row
         let _ = (lookup.needsYou = waiting.count)
