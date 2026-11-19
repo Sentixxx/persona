@@ -261,27 +261,28 @@ final class AppModel {
     @ObservationIgnored private var cardLookupWake: (at: Date, task: Task<Void, Never>)?
     /// Lookups out when a list hint named their session: their answer may be older than the hint, so they ask again.
     @ObservationIgnored private var cardLookupsStale: Set<SessionKey> = []
-    /// Card sessions a paging hub's lists held at the last pass: one that leaves them (hidden, or off the page) is asked
-    /// about again.
+    /// Card sessions the lists of a hub that leaves hidden sessions out held at the last pass: one that leaves them
+    /// (hidden, or off the page) is asked about again.
     @ObservationIgnored private var cardSessionsListed: Set<SessionKey> = []
-    /// Each paging hub's list rows as last landed (`rememberListedRows`): what stands while its list reloads.
+    /// The list rows of each hub that leaves hidden sessions out, as last landed (`rememberListedRows`): what stands while
+    /// its list reloads.
     @ObservationIgnored private var lastListedRows: [String: [SessionKey: Session]] = [:]
     /// Watched sessions an exact lookup found the hub no longer has: a kept row of one is not counted as waiting.
     @ObservationIgnored private var cardSessionsGone: Set<SessionKey> = []
 
-    /// The rows a paging hub's lists hold now (the Agents list and its sections), nil where the list is the whole
-    /// collection. A row kept in `sessionIndex` from an earlier page or an opened chat is not refreshed when the list
-    /// leaves it out, so it does not say whether that session is hidden now. A list between a new query and its first
-    /// page (`SessionListModel.reset`) says it is not paged and has no rows; the hub still pages, so the last landed
-    /// rows stand until the new page lands.
+    /// The rows the lists of a hub that leaves hidden sessions out hold now (`currentListedRows`). A row kept in
+    /// `sessionIndex` from an earlier page or an opened chat is not refreshed when the list leaves it out, so it does not
+    /// say whether that session is hidden now. A list between a new query and its first page (`SessionListModel.reset`)
+    /// has no rows and says neither paged nor complete; the hub has not changed, so the last landed rows stand until the
+    /// new page lands.
     private func listedSessionRows(_ group: String) -> [SessionKey: Session]? {
         if let rows = currentListedRows(group) { return rows }
         if let list = sessionLists.lists[group], !list.loaded { return lastListedRows[group] }
         return nil
     }
 
-    /// A paging hub's lists landed: their rows stand for it until the next landing (nil: the list is the whole
-    /// collection now).
+    /// The lists landed: their rows stand for the hub until the next landing (nil: an older hub, whose lists annotate
+    /// hidden rows).
     func rememberListedRows(_ group: String) {
         guard let list = sessionLists.lists[group], list.loaded else { return }
         lastListedRows[group] = currentListedRows(group)
@@ -295,11 +296,11 @@ final class AppModel {
         rows.compactMap { cardSessionsGone.contains($0.key) ? nil : session($0.key) ?? $0 }.filter { $0.hiddenByDirectory != true }
     }
 
-    /// The rows a hub that leaves directory-hidden sessions out of its lists (`sessions_list`) holds in them now: a
-    /// window of pages, or a complete copy read in full (`query.legacy`, the repository grouping). nil for an older hub,
-    /// whose complete lists annotate hidden rows instead.
+    /// The rows a hub that leaves directory-hidden sessions out of its lists holds in them now (the Agents list and its
+    /// sections): a window of pages, or a complete copy read from its pages (`query.legacy`, the repository grouping;
+    /// `SessionListModel.complete`). nil for an older hub, whose complete lists annotate hidden rows instead.
     private func currentListedRows(_ group: String) -> [SessionKey: Session]? {
-        guard let list = sessionLists.lists[group], list.paged || list.loaded && features(group).contains("sessions_list") else { return nil }
+        guard let list = sessionLists.lists[group], list.paged || list.complete else { return nil }
         var rows: [SessionKey: Session] = [:]
         for row in list.rows where rows[row.key] == nil { rows[row.key] = row }
         for (scope, page) in sessionLists.sections where scope.hub == group {
@@ -308,8 +309,8 @@ final class AppModel {
         return rows
     }
 
-    /// Which session a pending card is shown by, for the pages, counts and badges alike: on a paging hub the lists'
-    /// current row, else the card's exact lookup, else a kept row; elsewhere the app's row, else the lookup. Made once
+    /// Which session a pending card is shown by, for the pages, counts and badges alike: on a hub that leaves hidden
+    /// sessions out, the lists' current row, else the card's exact lookup, else a kept row; elsewhere the app's row, else the lookup. Made once
     /// for a pass over many cards (each paging hub's rows are read once).
     func cardSessionResolver() -> (SessionKey) -> Session? {
         var listed: [String: [SessionKey: Session]] = [:]
