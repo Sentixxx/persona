@@ -224,6 +224,11 @@ func (n *Node) cwdBlocked(cwd string) bool {
 	if n.agentDirBlocked(cwd) { // a blocked Agent folder (agentdirs.go)
 		return true
 	}
+	return n.claudeDirBlocks(cwd)
+}
+
+// claudeDirBlocks: cwd is under a blocked Claude config folder (the claude_dirs_blocked part of cwdBlocked).
+func (n *Node) claudeDirBlocks(cwd string) bool {
 	d := n.cdirs
 	if d == nil {
 		return false

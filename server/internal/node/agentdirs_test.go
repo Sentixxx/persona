@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/nwverse/persona/server/internal/identity"
 	"github.com/nwverse/persona/server/internal/proto"
 )
 
@@ -163,3 +164,34 @@ func TestBlockedAgentDirsConfigureNullKeepsBlocks(t *testing.T) {
 	}
 }
 
+// A blocked Agent folder never takes the assistant's own conversations or the sessions the hub keeps out of the
+// list (docs/protocol/protocol.md "Agent directory visibility"), at rest as well as running: the offline scan exempts
+// them as the live list does. Another session there stays out.
+func TestBlockedAgentDirKeepsAssistantAndKeptSessionsAtRest(t *testing.T) {
+	t.Setenv("PERSONA_HOME", "")
+	n, _, home := herdrNode(t)
+	assistant := identity.AssistantDir(home)
+	work := filepath.Join(home, "work", "bots")
+	for _, d := range []string{assistant, work} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const mine, kept, other = "eeeeeeee-0000-0000-0000-000000000001", "eeeeeeee-0000-0000-0000-000000000002", "eeeeeeee-0000-0000-0000-000000000003"
+	writeDrift(t, home, mine, assistant, assistant)
+	writeDrift(t, home, kept, work, work)
+	writeDrift(t, home, other, work, work)
+	if _, err := request(t, n, "node.configure", map[string]any{"keep_sessions": []string{kept}, "agent_dirs_blocked": []string{assistant, work}}); err != nil {
+		t.Fatal(err)
+	}
+	offlineCache.Lock()
+	offlineCache.at = time.Time{}
+	offlineCache.Unlock()
+	got := map[string]bool{}
+	for _, s := range n.sessionList(context.Background(), false) {
+		got[s.SessionID] = true
+	}
+	if !got[mine] || !got[kept] || got[other] {
+		t.Fatalf("listed at rest: assistant %v, kept %v, other %v", got[mine], got[kept], got[other])
+	}
+}
