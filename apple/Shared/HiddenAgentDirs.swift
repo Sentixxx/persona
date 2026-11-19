@@ -30,7 +30,8 @@ nonisolated struct HiddenAgentDirs: Codable, Equatable, Sendable {
     func problem(_ input: String) -> String? {
         let p = Self.cleaned(input)
         if p.isEmpty { return nil }
-        if p == "~" || p == "/" || p == "*" { return String(localized: "Can't hide the whole home or root folder") }
+        // the home folder, the root, or a pattern every folder matches ("*", "/*"), as the manager refuses them
+        if p == "~" || p.drop(while: { $0 == "/" }).allSatisfy({ $0 == "*" }) { return String(localized: "Can't hide the whole home or root folder") }
         if !p.hasPrefix("/") && !p.hasPrefix("~/") && !p.hasPrefix("*") { return String(localized: "Start with / or ~/, or * for a folder name") }
         if rules.contains(where: { $0.pattern == p }) { return String(localized: "Already in the list") }
         return nil

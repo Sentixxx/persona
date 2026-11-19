@@ -246,6 +246,37 @@ final class AppModel {
         didSet {
             saveSnapshot(); countBadges(); withdrawSettled(Set(oldValue.keys).subtracting(interactions.keys))
             PermissionDiff.prewarm(interactions.lazy.filter { oldValue[$0.key] == nil }.map(\.value))
+            lookUpCardSessions()
+        }
+    }
+    /// Pending cards' sessions no list holds, from one exact lookup each (#8584): a paging hub leaves directory-hidden
+    /// and off-page sessions out of its list but sends every pending card, so whether a card shows (Needs you, the
+    /// scoped attention views) is read from this row when the list has none (`cardSession`). Kept while the card is.
+    private(set) var cardSessionRows: [SessionKey: Session] = [:]
+    @ObservationIgnored private var cardSessionsAsked: Set<SessionKey> = []
+    @ObservationIgnored private var cardSessionsInFlight = 0
+
+    /// The session a pending card is shown by: the list's row, else its card's exact lookup.
+    func cardSession(_ key: SessionKey) -> Session? { latest(key) ?? cardSessionRows[key] }
+
+    /// Asks for the rows of pending cards' sessions that no list holds, a few at a time until every one is asked; a
+    /// failed one is asked again with the next change of the cards. Answers for cards that are gone go with them.
+    private func lookUpCardSessions() {
+        let keys = Set(interactions.values.lazy.filter { !$0.isSessionless }.map(\.sessionKey))
+        if cardSessionRows.keys.contains(where: { !keys.contains($0) }) { cardSessionRows = cardSessionRows.filter { keys.contains($0.key) } }
+        cardSessionsAsked.formIntersection(keys)
+        for key in keys where cardSessionsInFlight < 4 && !cardSessionsAsked.contains(key) && latest(key) == nil {
+            guard sessionLists.lists[key.group]?.paged == true, let api = api(key.group), api.sessionLookup else { continue }
+            cardSessionsAsked.insert(key)
+            cardSessionsInFlight += 1
+            Task { [weak self] in
+                let row = try? await api.sessionListDetail(key, title: "")
+                guard let self else { return }
+                self.cardSessionsInFlight -= 1
+                if let row, self.cardSessionsAsked.contains(key) { self.cardSessionRows[key] = row } // still a card's
+                else if row == nil { self.cardSessionsAsked.remove(key) } // failed or none: with the next change of the cards
+                self.lookUpCardSessions()
+            }
         }
     }
     /// When each group's whole list of pending interactions was last asked for (NotificationWithdrawal.stale).
