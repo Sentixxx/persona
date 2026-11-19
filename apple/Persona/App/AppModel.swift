@@ -249,35 +249,75 @@ final class AppModel {
             lookUpCardSessions()
         }
     }
-    /// Pending cards' sessions no list holds, from one exact lookup each (#8584): a paging hub leaves directory-hidden
+    /// Pending cards' sessions no list holds, from an exact lookup each (#8584): a paging hub leaves directory-hidden
     /// and off-page sessions out of its list but sends every pending card, so whether a card shows (Needs you, the
-    /// scoped attention views) is read from this row when the list has none (`cardSession`). Kept while the card is.
+    /// scoped attention views, the badges) is read from this row when the list has none (`cardSession`). Kept while the
+    /// card is; asked again when a list hint names the session (hidden or shown again), at most every few seconds.
     private(set) var cardSessionRows: [SessionKey: Session] = [:]
-    @ObservationIgnored private var cardSessionsAsked: Set<SessionKey> = []
-    @ObservationIgnored private var cardSessionsInFlight = 0
+    private struct CardLookup { var answered = false; var tries = 0; var nextAt = Date.distantPast }
+    @ObservationIgnored private var cardLookups: [SessionKey: CardLookup] = [:]
+    @ObservationIgnored private var cardLookupsOut: Set<SessionKey> = []
+    @ObservationIgnored private var cardLookupWake: Task<Void, Never>?
 
     /// The session a pending card is shown by: the list's row, else its card's exact lookup.
     func cardSession(_ key: SessionKey) -> Session? { latest(key) ?? cardSessionRows[key] }
 
-    /// Asks for the rows of pending cards' sessions that no list holds, a few at a time until every one is asked; a
-    /// failed one is asked again with the next change of the cards. Answers for cards that are gone go with them.
+    private var pendingCardSessions: Set<SessionKey> {
+        Set(interactions.values.lazy.filter { !$0.isSessionless }.map(\.sessionKey))
+    }
+
+    /// Asks for the rows of pending cards' sessions that no list holds, four at a time until each is answered (a
+    /// session the hub does not have is an answer too). A failed one is asked again after 1, 2, 4 s, then left as it
+    /// is until a list hint names it. Answers for cards that are gone go with them.
     private func lookUpCardSessions() {
-        let keys = Set(interactions.values.lazy.filter { !$0.isSessionless }.map(\.sessionKey))
+        let keys = pendingCardSessions
         if cardSessionRows.keys.contains(where: { !keys.contains($0) }) { cardSessionRows = cardSessionRows.filter { keys.contains($0.key) } }
-        cardSessionsAsked.formIntersection(keys)
-        for key in keys where cardSessionsInFlight < 4 && !cardSessionsAsked.contains(key) && latest(key) == nil {
+        cardLookups = cardLookups.filter { keys.contains($0.key) }
+        let now = Date()
+        var wake: Date?
+        for key in keys where cardLookupsOut.count < 4 && !cardLookupsOut.contains(key) && latest(key) == nil {
             guard sessionLists.lists[key.group]?.paged == true, let api = api(key.group), api.sessionLookup else { continue }
-            cardSessionsAsked.insert(key)
-            cardSessionsInFlight += 1
+            let lookup = cardLookups[key] ?? CardLookup()
+            if lookup.answered || lookup.tries >= 4 { continue }
+            if lookup.nextAt > now { wake = min(wake ?? lookup.nextAt, lookup.nextAt); continue }
+            cardLookupsOut.insert(key)
             Task { [weak self] in
-                let row = try? await api.sessionListDetail(key, title: "")
+                let answer: Session??
+                do { answer = .some(try await api.sessionListDetail(key, title: "")) } catch { answer = nil }
                 guard let self else { return }
-                self.cardSessionsInFlight -= 1
-                if let row, self.cardSessionsAsked.contains(key) { self.cardSessionRows[key] = row } // still a card's
-                else if row == nil { self.cardSessionsAsked.remove(key) } // failed or none: with the next change of the cards
+                self.cardLookupsOut.remove(key)
+                guard self.pendingCardSessions.contains(key) else { return self.lookUpCardSessions() }
+                if let answer {
+                    self.cardLookups[key] = CardLookup(answered: true, nextAt: Date().addingTimeInterval(5))
+                    self.cardSessionRows[key] = answer
+                    self.countBadges()
+                } else {
+                    var failed = self.cardLookups[key] ?? CardLookup()
+                    failed.tries += 1
+                    failed.nextAt = Date().addingTimeInterval(pow(2, Double(failed.tries - 1)))
+                    self.cardLookups[key] = failed
+                }
                 self.lookUpCardSessions()
             }
         }
+        if let wake, cardLookupWake == nil {
+            cardLookupWake = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(max(0, wake.timeIntervalSinceNow)))
+                self?.cardLookupWake = nil
+                self?.lookUpCardSessions()
+            }
+        }
+    }
+
+    /// A `sessions_list` hint: the card sessions it names (every one of the group's when it cannot say) are asked
+    /// about again, so a session hidden or shown again since its lookup shows its card as the list does.
+    private func cardSessionsListChanged(_ group: String, _ changes: SessionListChanges?) {
+        var stale = false
+        for (key, lookup) in cardLookups where key.group == group && (lookup.answered || lookup.tries > 0) && (changes?.names(key) ?? true) {
+            cardLookups[key] = CardLookup(nextAt: lookup.nextAt)
+            stale = true
+        }
+        if stale { lookUpCardSessions() }
     }
     /// When each group's whole list of pending interactions was last asked for (NotificationWithdrawal.stale).
     @ObservationIgnored var interactionsListedAt: [String: Date] = [:]
@@ -2879,6 +2919,7 @@ final class AppModel {
             }
         case .sessionsList(let revision, let changes):
             sessionLists.invalidate(group, revision: revision)
+            cardSessionsListChanged(group, changes)
             if isHub { followNeedsYou() }
             for key in subscribers.keys where key.group == group {
                 if passesOver(key, revision: revision, changes: changes) {
