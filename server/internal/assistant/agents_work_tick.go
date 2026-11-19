@@ -147,6 +147,8 @@ func (s *Service) workGuard(v *workView, e db.SessionWork, ownCard bool) (proto.
 		return c, "gone"
 	case c.HiddenByDirectory():
 		return c, "hidden by directory"
+	case proto.UnrecoverableTurnErrorCode(c.TurnError) != "" || c.TurnErrorKind == proto.TurnErrorUnrecoverable:
+		return c, "conversation invalid"
 	case c.ReadOnlyReason != "":
 		return c, "read-only"
 	case c.Status == proto.StatusWorking || !sameTurn(c, e.TurnAt):
