@@ -5623,21 +5623,25 @@ known a `~/` rule does not match), or a folder name glob starting with `*` (`*bo
 that name anywhere in the path. A rule matches the folder and everything under it. Trailing slashes are dropped;
 patterns that would cover home or the root, or that every folder matches (`*`, `/*`), invalid globs, duplicates, an
 `action` other than `block` or `hide`, and more than 100 rules are refused (400). A rule saved without an `action` (by the hiding-only version, #8578, or an
-older client) is stored and answered as `hide`; the apps and `persona_settings` make a new rule `block` unless Hide
+older client) is stored and answered as `hide`, except that a `PUT` from such a client leaves an existing rule's action
+as it is (so switching one rule there does not turn blocks into hides); the apps and `persona_settings` make a new rule `block` unless Hide
 is chosen. Matching is lexical and case-sensitive; a home reached through a link (`/home/me -> /data/home/me`,
 `NodeInfo.home_real`) matches under either name, and the node also matches a working folder with its links
 followed. Empty is the default.
 
 **Block** (#10053). The manager sends the computer's enabled block patterns in `node.configure`
-(`agent_dirs_blocked: [...]`, never null) when its node connects and again whenever they change, then lists again.
+(`agent_dirs_blocked: [...]`, `[]` when none block) when its node connects and again whenever they change, then lists
+again; when it cannot read the rules (before its first successful read), it sends `null`, which leaves the node's list
+as it is rather than unblocking every folder.
 A node that announces `agent_dirs_blocked` keeps them (also across restarts, `~/.persona/agent-dirs-blocked.json`)
 and, for a session working there, with any runtime: leaves it out of every session list, so no row, count or
-revision reaches the hub; sends no `hook.event`, `session.items` or `session.delta` of it; gives a Claude Code hook
+revision reaches the hub; pushes no `hook.event`, `session.items` or `session.delta` of it (a read the hub asks
+for by session id, such as one of a chat opened before the block, is still answered); gives a Claude Code hook
 no decision at once (Claude Code asks in its terminal); dismisses a runtime package's `interaction.create` at once
 (handed back to the computer); leaves its Codex cards out of `codex.interactions` and creates no card for a shared
 app-server's approval (Codex's own client decides); answers `personad ask` unavailable and drops `personad notify`;
 and drops what standby kept of it instead of replaying it. The assistant's own conversations and the sessions the hub
-keeps (`keep_sessions`) are never blocked. The manager still treats every enabled rule as hiding, so a node from
+keeps (`keep_sessions`) are never blocked, at rest as well as running. The manager still treats every enabled rule as hiding, so a node from
 before blocking, which lists those sessions, only gets them hidden.
 
 `persona_settings` `agents.hidden_dirs` takes the same values as `agents.blocked_claude_dirs`: `add`
