@@ -14,11 +14,15 @@ import { Group, Row, RowFailed, SettingsHint, Switch, settingsInputClass } from 
 export interface HiddenAgentDirRule { pattern: string; enabled: boolean }
 export interface HiddenAgentDirsState { rules: HiddenAgentDirRule[]; home?: string }
 
+/** The pattern as saved: trimmed, without trailing slashes, but never less than one character ("//" is "/", not blank). */
+const cleanPattern = (input: string) => input.trim().replace(/(.)\/+$/, "$1");
+
 /** Why a typed folder cannot be added ("" = it can): the server's rules, said before the round trip. */
 export function hiddenPatternError(input: string, rules: HiddenAgentDirRule[]): string {
-  const p = input.trim().replace(/\/+$/, "");
+  const p = cleanPattern(input);
   if (!p) return "";
-  if (p === "~" || p === "/" || p === "*") return t("hidden-agent-dirs.pattern_root");
+  // the home folder, the root, or a pattern matching every folder (as the hub refuses them)
+  if (p === "~" || /^\/*\**$/.test(p)) return t("hidden-agent-dirs.pattern_root");
   if (!p.startsWith("/") && !p.startsWith("~/") && !p.startsWith("*")) return t("hidden-agent-dirs.pattern_prefix");
   if (rules.some((r) => r.pattern === p)) return t("hidden-agent-dirs.pattern_exists");
   return "";
@@ -63,7 +67,7 @@ export function HiddenAgentDirs() {
   };
   const typed = state ? hiddenPatternError(input, state.rules) : "";
   const add = async () => {
-    const pattern = input.trim().replace(/\/+$/, "");
+    const pattern = cleanPattern(input);
     if (!state || !pattern || typed || saving.current) return;
     if (await save([...state.rules, { pattern, enabled: true }])) setInput("");
   };

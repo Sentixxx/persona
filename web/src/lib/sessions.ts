@@ -5,16 +5,16 @@ import { CompleteSessions } from "./complete-sessions";
 import { backgroundWaiting, stateOf } from "./format";
 import { foldedState } from "./child-sessions";
 import { foldRows } from "./folded-rows";
-import { getSession, getState, onHubEvent, subscribe, useStore } from "./store";
+import { cardSessionRow, getState, onHubEvent, subscribe, useStore } from "./store";
 import { SESSIONS_LIST_FEATURE } from "./session-list";
 import { runtimeAgents, runtimeSessions, supportsPagedAgents } from "./runtime-list";
 import type { Interaction, Session } from "./types";
 
 /** #8578: a directory-hidden session's pending cards leave the card lists and counts (Needs you, the sidebar, the Inbox,
  *  the assistants' badges) as its row leaves the lists; they stay answerable on that session's own page. The row comes
- *  from the lists or from the card's exact lookup (store.ts lookUpCardSessions), which returns hidden rows too. */
+ *  from the lists or from the card's exact lookup (store.ts cardSessionRow), which returns hidden rows too. */
 export function directoryVisibleCards(cards: Interaction[]): Interaction[] {
-  const visible = cards.filter((ix) => !getSession(ix.machine_id, ix.session_id)?.hidden_by_directory);
+  const visible = cards.filter((ix) => !cardSessionRow(ix.machine_id, ix.session_id)?.hidden_by_directory);
   return visible.length === cards.length ? cards : visible;
 }
 

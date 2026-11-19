@@ -53,3 +53,28 @@ it("says why a typed folder cannot be added", () => {
  expect(hiddenPatternError("~/work/*/", original.rules)).toBe(t("hidden-agent-dirs.pattern_exists"));
  expect(hiddenPatternError("*botfarm*", original.rules)).toBe("");
 });
+// #8584: input that cleans to the root or to a pattern matching every folder is refused, not silently dropped;
+// only blank input says nothing.
+it("refuses the root and patterns that match every folder", () => {
+ const root = t("hidden-agent-dirs.pattern_root");
+ for (const p of ["/", "//", "*", "**", "/*", "/**", "//*/", "~/", "~//"]) expect(hiddenPatternError(p, []), p).toBe(root);
+ for (const p of ["/opt/x/", "*botfarm*", "~/*"]) expect(hiddenPatternError(p, []), p).toBe("");
+ expect(hiddenPatternError("", [])).toBe("");
+ expect(hiddenPatternError("   ", [])).toBe("");
+});
+it("disables Add for input that cleans to the root, and saves a cleaned folder", async () => {
+ await show();
+ const input = host.querySelector<HTMLInputElement>('input[aria-label]')!;
+ const type = (value: string) => act(async () => {
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+ });
+ const addButton = () => [...host.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === t("hidden-agent-dirs.add"))!;
+ await type("//");
+ expect(addButton().disabled).toBe(true);
+ expect(host.textContent).toContain(t("hidden-agent-dirs.pattern_root"));
+ await type("/opt/x//");
+ expect(addButton().disabled).toBe(false);
+ await act(async () => addButton().click());
+ expect(calls.at(-1)).toMatchObject({ method: "PUT", json: { rules: [...original.rules, { pattern: "/opt/x", enabled: true }] } });
+});
