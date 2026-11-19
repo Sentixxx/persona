@@ -102,7 +102,11 @@ import Observation
                 // landing filtered it out (#8748); an unfiltered landing still drops a missing row.
                 let filter = list.query.manager.isEmpty ? nil : list.query.manager
                 model.landCompleteSessionList(rows, group: group, manager: filter)
-                model.rememberListedRows(group) // the whole collection now: no paging rows stand for it
+                // A complete copy from a hub that leaves hidden sessions out stands for its list like a page (nil from
+                // an older hub); a card's session it does not hold is looked up.
+                model.rememberListedRows(group)
+                model.lookUpCardSessions()
+                model.countBadges()
             }
             // Whether the list is a window or the whole collection decides where the switcher's counts come from.
             if group == model.hub?.group { model.followNeedsYou() }
