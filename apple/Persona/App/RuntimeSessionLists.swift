@@ -301,6 +301,7 @@ extension AppModel {
         applySessions(Dictionary(grouping: Self.merging(incoming, into: old), by: \.machineRef))
         // The lists' rows changed: a pending card's session they no longer hold is looked up (hidden, or off the page),
         // and the counts read the cards again.
+        rememberListedRows(group)
         lookUpCardSessions()
         countBadges()
     }

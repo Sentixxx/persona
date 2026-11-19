@@ -264,11 +264,28 @@ final class AppModel {
     /// Card sessions a paging hub's lists held at the last pass: one that leaves them (hidden, or off the page) is asked
     /// about again.
     @ObservationIgnored private var cardSessionsListed: Set<SessionKey> = []
+    /// Each paging hub's list rows as last landed (`rememberListedRows`): what stands while its list reloads.
+    @ObservationIgnored private var lastListedRows: [String: [SessionKey: Session]] = [:]
 
     /// The rows a paging hub's lists hold now (the Agents list and its sections), nil where the list is the whole
     /// collection. A row kept in `sessionIndex` from an earlier page or an opened chat is not refreshed when the list
-    /// leaves it out, so it does not say whether that session is hidden now.
+    /// leaves it out, so it does not say whether that session is hidden now. A list between a new query and its first
+    /// page (`SessionListModel.reset`) says it is not paged and has no rows; the hub still pages, so the last landed
+    /// rows stand until the new page lands.
     private func listedSessionRows(_ group: String) -> [SessionKey: Session]? {
+        if let rows = currentListedRows(group) { return rows }
+        if let list = sessionLists.lists[group], !list.loaded { return lastListedRows[group] }
+        return nil
+    }
+
+    /// A paging hub's lists landed: their rows stand for it until the next landing (nil: the list is the whole
+    /// collection now).
+    func rememberListedRows(_ group: String) {
+        guard let list = sessionLists.lists[group], list.loaded else { return }
+        lastListedRows[group] = currentListedRows(group)
+    }
+
+    private func currentListedRows(_ group: String) -> [SessionKey: Session]? {
         guard let list = sessionLists.lists[group], list.paged else { return nil }
         var rows: [SessionKey: Session] = [:]
         for row in list.rows where rows[row.key] == nil { rows[row.key] = row }
@@ -296,20 +313,27 @@ final class AppModel {
 
     /// The pending cards whose session is not directory-hidden, oldest first: what the pages of cards and every count
     /// start from.
-    var directoryVisibleInteractions: [Interaction] {
-        let session = cardSessionResolver()
-        return pendingInteractions.filter { session($0.sessionKey)?.hiddenByDirectory != true }
+    var directoryVisibleInteractions: [Interaction] { directoryVisibleInteractions(reading: cardSessionResolver()) }
+
+    /// `directoryVisibleInteractions` with a resolver the caller reads the same pass with.
+    func directoryVisibleInteractions(reading session: (SessionKey) -> Session?) -> [Interaction] {
+        pendingInteractions.filter { session($0.sessionKey)?.hiddenByDirectory != true }
     }
 
-    private var pendingCardSessions: Set<SessionKey> {
-        Set(interactions.values.lazy.filter { !$0.isSessionless }.map(\.sessionKey))
+    /// The sessions whose visibility the cards and counts read from an exact lookup when no list holds them: pending
+    /// cards' sessions, and kept rows that wait for the user (a prompt only the terminal shows has no card). A kept row
+    /// is not refreshed once a paging list leaves it out, so its lookup says whether it is hidden or only off the page.
+    private var visibilityWatchedSessions: Set<SessionKey> {
+        var keys = Set(interactions.values.lazy.filter { !$0.isSessionless }.map(\.sessionKey))
+        for s in allSessions where !s.assistant && s.countedState == .needsYou { keys.insert(s.key) }
+        return keys
     }
 
     /// Asks for the rows of pending cards' sessions that no list holds, four at a time until each is answered (a
     /// session the hub does not have is an answer too). A failed one is asked again after 1, 2, 4 s, then left as it
     /// is until a list hint names it. Answers for cards that are gone go with them.
     func lookUpCardSessions() {
-        let keys = pendingCardSessions
+        let keys = visibilityWatchedSessions
         if cardSessionRows.keys.contains(where: { !keys.contains($0) }) { cardSessionRows = cardSessionRows.filter { keys.contains($0.key) } }
         cardLookups = cardLookups.filter { keys.contains($0.key) }
         var listed: [String: Set<SessionKey>] = [:]
@@ -320,7 +344,8 @@ final class AppModel {
         // Left the lists since the last pass (hidden, or off the page): whatever an earlier lookup said, ask again; one
         // out now may answer from before, so it asks again when it lands.
         for key in cardSessionsListed.subtracting(nowListed) where keys.contains(key) {
-            if cardLookupsOut.contains(key) { cardLookupsStale.insert(key) } else { cardLookups[key] = nil }
+            // at most once every 5 s a session (a search typed into the list moves rows in and out)
+            if cardLookupsOut.contains(key) { cardLookupsStale.insert(key) } else { cardLookups[key] = CardLookup(nextAt: cardLookups[key]?.nextAt ?? .distantPast) }
         }
         cardSessionsListed = nowListed
         let now = Date()
@@ -337,7 +362,7 @@ final class AppModel {
                 guard let self else { return }
                 self.cardLookupsOut.remove(key)
                 let stale = self.cardLookupsStale.remove(key) != nil
-                guard self.pendingCardSessions.contains(key) else { return self.lookUpCardSessions() }
+                guard self.visibilityWatchedSessions.contains(key) else { return self.lookUpCardSessions() }
                 if let answer {
                     self.cardLookups[key] = CardLookup(answered: !stale, nextAt: Date().addingTimeInterval(5))
                     self.cardSessionRows[key] = answer
@@ -4662,7 +4687,7 @@ final class AppModel {
         // Agents counts what its Needs You section lists: one per session that waits for the user, not one per card.
         // A kept row of a session the paging list has since left out (hidden) is not one waiting: read through the same
         // projection as its cards.
-        let waitingRows = scoped(allSessions).filter { session($0.key)?.hiddenByDirectory != true }
+        let waitingRows = scoped(allSessions).map { session($0.key) ?? $0 }.filter { $0.hiddenByDirectory != true }
         b.agents = AgentsNeedsYou.badge(AgentsNeedsYou.rows(cards: scopedInteractions, waiting: AgentsNeedsYou.waiting(waitingRows)),
                                         place: place)
         if b != badges { badges = b }
@@ -4678,7 +4703,8 @@ final class AppModel {
         let rows = needsYou.flatMap { $0.group == group ? $0.rows : nil } ?? allSessions
         // The cards and their sessions as the pages and the tab badges read them (`directoryVisibleInteractions`).
         let resolve = cardSessionResolver()
-        return AssistantBadges.waiting(roster: roster, group: group, sessions: rows, interactions: directoryVisibleInteractions,
+        return AssistantBadges.waiting(roster: roster, group: group, sessions: rows.map { resolve($0.key) ?? $0 },
+                                       interactions: directoryVisibleInteractions(reading: resolve),
                                        known: resolve) { key, session in
             if session?.hiddenByDirectory == true || resolve(key)?.hiddenByDirectory == true { return false }
             switch TabBadges.place(key, session: session, quiet: session?.quiet == true || isQuiet(key), mutes: pinsStore(key.group)?.mutes) {

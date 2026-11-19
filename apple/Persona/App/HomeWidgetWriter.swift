@@ -297,7 +297,7 @@ extension AppModel {
         }
         s.agents = HomeAgents.build(
             // waiting sessions through the cards' projection, as the Agents badge counts them (`countBadges`)
-            needsYou: AgentsNeedsYou.rows(cards: scopedInteractions, waiting: AgentsNeedsYou.waiting(sessions.filter { cardRow($0.key)?.hiddenByDirectory != true })),
+            needsYou: AgentsNeedsYou.rows(cards: scopedInteractions, waiting: AgentsNeedsYou.waiting(sessions.map { cardRow($0.key) ?? $0 }.filter { $0.hiddenByDirectory != true })),
             sessions: sessions, place: place, session: { byKey[$0] }, machineName: { names[$0] },
             isTask: { tasks.task(of: $0) != nil })
         // Persona answering in one of its own conversations: the face thinks (`FleetPersona`'s `assistant`).
