@@ -257,7 +257,9 @@ final class AppModel {
     private struct CardLookup { var answered = false; var tries = 0; var nextAt = Date.distantPast }
     @ObservationIgnored private var cardLookups: [SessionKey: CardLookup] = [:]
     @ObservationIgnored private var cardLookupsOut: Set<SessionKey> = []
-    @ObservationIgnored private var cardLookupWake: Task<Void, Never>?
+    @ObservationIgnored private var cardLookupWake: (at: Date, task: Task<Void, Never>)?
+    /// Lookups out when a list hint named their session: their answer may be older than the hint, so they ask again.
+    @ObservationIgnored private var cardLookupsStale: Set<SessionKey> = []
 
     /// The session a pending card is shown by: the list's row, else its card's exact lookup.
     func cardSession(_ key: SessionKey) -> Session? { latest(key) ?? cardSessionRows[key] }
@@ -286,9 +288,10 @@ final class AppModel {
                 do { answer = .some(try await api.sessionListDetail(key, title: "")) } catch { answer = nil }
                 guard let self else { return }
                 self.cardLookupsOut.remove(key)
+                let stale = self.cardLookupsStale.remove(key) != nil
                 guard self.pendingCardSessions.contains(key) else { return self.lookUpCardSessions() }
                 if let answer {
-                    self.cardLookups[key] = CardLookup(answered: true, nextAt: Date().addingTimeInterval(5))
+                    self.cardLookups[key] = CardLookup(answered: !stale, nextAt: Date().addingTimeInterval(5))
                     self.cardSessionRows[key] = answer
                     self.countBadges()
                 } else {
@@ -300,21 +303,27 @@ final class AppModel {
                 self.lookUpCardSessions()
             }
         }
-        if let wake, cardLookupWake == nil {
-            cardLookupWake = Task { [weak self] in
-                try? await Task.sleep(for: .seconds(max(0, wake.timeIntervalSinceNow)))
+        if let wake, wake < cardLookupWake?.at ?? .distantFuture {
+            cardLookupWake?.task.cancel()
+            cardLookupWake = (wake, Task { [weak self] in
+                guard (try? await Task.sleep(for: .seconds(max(0, wake.timeIntervalSinceNow)))) != nil else { return }
                 self?.cardLookupWake = nil
                 self?.lookUpCardSessions()
-            }
+            })
         }
     }
 
-    /// A `sessions_list` hint: the card sessions it names (every one of the group's when it cannot say) are asked
-    /// about again, so a session hidden or shown again since its lookup shows its card as the list does.
+    /// A `sessions_list` hint: the card sessions it names are asked about again, at most every 5 s, so a session hidden
+    /// or shown again since its lookup shows its card as the list does. A hint that cannot say which rows changed asks
+    /// again only about answers older than 30 s.
     private func cardSessionsListChanged(_ group: String, _ changes: SessionListChanges?) {
+        let now = Date()
+        for key in cardLookupsOut where key.group == group && (changes?.names(key) ?? true) { cardLookupsStale.insert(key) }
         var stale = false
-        for (key, lookup) in cardLookups where key.group == group && (lookup.answered || lookup.tries > 0) && (changes?.names(key) ?? true) {
-            cardLookups[key] = CardLookup(nextAt: lookup.nextAt)
+        for (key, lookup) in cardLookups where key.group == group && (lookup.answered || lookup.tries > 0) {
+            // an answer's nextAt is 5 s after it came
+            guard changes?.names(key) ?? (lookup.answered && lookup.nextAt < now.addingTimeInterval(-25)) else { continue }
+            cardLookups[key] = CardLookup(nextAt: lookup.answered ? lookup.nextAt : max(lookup.nextAt, now.addingTimeInterval(5)))
             stale = true
         }
         if stale { lookUpCardSessions() }
