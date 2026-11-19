@@ -36,6 +36,9 @@ import Testing
         #expect(state.problem("/opt/bots") == nil)
         #expect(state.problem("relative") != nil)
         #expect(state.problem("~/") != nil)
+        for everything in ["/", "//", "*", "**", "/*", "/**", "//*/"] { #expect(state.problem(everything) != nil, "\(everything)") }
+        #expect(state.problem("~/*") == nil)
+        #expect(state.problem("/opt/*") == nil)
         #expect(state.problem("~/work/") != nil)
     }
 

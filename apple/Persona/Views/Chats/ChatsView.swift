@@ -1243,7 +1243,7 @@ private struct AgentsList: View {
         // One row per session that waits for the user, its cards under it (`AgentsNeedsYou`): the section, the Needs
         // You filter and the tab's badge count these rows.
         let waiting = AgentsNeedsYou.rows(
-            cards: AgentsNeedsYou.cards(feed.following ? feed.interactions : model.scopedInteractions, session: session,
+            cards: AgentsNeedsYou.cards(feed.following ? feed.interactions : model.scopedInteractions, session: { session($0) ?? model.cardSessionRows[$0] },
                                         machine: machineFilter, hub: model.isMultiHub ? hubFilter : nil),
             waiting: AgentsNeedsYou.waiting(base)) // a folded child's card sits under its parent; a subtask the hub did not fold stays its own row
         let _ = (lookup.needsYou = waiting.count)
@@ -1958,7 +1958,8 @@ private struct AgentsList: View {
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(.isHeader)
             .accessibilityIdentifier("sidebar-agents-heading")
-            AgentsListMenu(actions: menuActions)
+            // In a view graph of its own: the list's updates replaced the open menu and scrolled it to its top (#10738).
+            MenuIsland(content: SidebarAgentsListMenu(actions: menuActions))
             if showsPersonalEntry {
                 Button { openFromList(PersonalAgentsRoute()) } label: {
                     ThemedIcon(Theme.Icon.personalAgents).font(Theme.Font.label).foregroundStyle(.secondary)
@@ -4141,7 +4142,8 @@ struct QuickFilterBar: View, Equatable {
         }, selection: selection.rawValue, choose: { id in
             if let filter = AgentFilter(rawValue: id), filter != selection { choose(filter) }
         }) {
-            AgentsGroupingMenu(iconOnly: true)
+            // In a view graph of its own: the list's updates replaced the open menu and scrolled it to its top (#10738).
+            MenuIsland(content: AgentsGroupingMenu(iconOnly: true))
         }
     }
     #endif

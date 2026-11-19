@@ -2,19 +2,19 @@
 import { useEffect, useMemo, useSyncExternalStore } from "react";
 import { credentialOwner, errorText } from "./api";
 import { CompleteSessions } from "./complete-sessions";
-import { stateOf } from "./format";
+import { backgroundWaiting, stateOf } from "./format";
 import { foldedState } from "./child-sessions";
 import { foldRows } from "./folded-rows";
-import { getSession, getState, onHubEvent, subscribe, useStore } from "./store";
+import { cardSessionRow, getState, onHubEvent, subscribe, useStore } from "./store";
 import { SESSIONS_LIST_FEATURE } from "./session-list";
 import { runtimeAgents, runtimeSessions, supportsPagedAgents } from "./runtime-list";
 import type { Interaction, Session } from "./types";
 
 /** #8578: a directory-hidden session's pending cards leave the card lists and counts (Needs you, the sidebar, the Inbox,
  *  the assistants' badges) as its row leaves the lists; they stay answerable on that session's own page. The row comes
- *  from the lists or from the card's exact lookup (store.ts lookUpCardSessions), which returns hidden rows too. */
+ *  from the lists or from the card's exact lookup (store.ts cardSessionRow), which returns hidden rows too. */
 export function directoryVisibleCards(cards: Interaction[]): Interaction[] {
-  const visible = cards.filter((ix) => !getSession(ix.machine_id, ix.session_id)?.hidden_by_directory);
+  const visible = cards.filter((ix) => !cardSessionRow(ix.machine_id, ix.session_id)?.hidden_by_directory);
   return visible.length === cards.length ? cards : visible;
 }
 
@@ -208,16 +208,20 @@ function useCompleteAgentSessions(on: boolean): FullAgentSessions {
 
 /** The agents by state. `badge` is the sidebar's "Needs you" count: without quiet tasks' agents, which the main conversation
  * tells about (#1731). */
+/** `waiting`: working, but only waiting on background commands (#6045, backgroundWaiting): not in `working`, as the
+ *  sidebar's quick filters count them (#10938). */
 export function stateCounts(all: Session[]) {
-  const c = { needs: 0, working: 0, unread: 0, badge: 0 };
+  const c = { needs: 0, working: 0, waiting: 0, unread: 0, badge: 0 };
   for (const s of all) {
     if (s.hidden_by_directory) continue;
     const st = stateOf(s);
     if (st === "needs_you") {
       c.needs++;
       if (!s.quiet) c.badge++;
-    } else if (st === "working") c.working++;
-    else if (st === "unread") c.unread++;
+    } else if (st === "working") {
+      if (backgroundWaiting(s)) c.waiting++;
+      else c.working++;
+    } else if (st === "unread") c.unread++;
   }
   return c;
 }
@@ -243,7 +247,9 @@ export function useCounts() {
   return useMemo(() => {
     if (!bounded || !counts) return { ...stateCounts(all), interactions, quietCounted: false };
     const needs = counts.state.needs_you ?? 0;
-    return { needs, working: counts.state.working ?? 0, unread: counts.state.unread ?? 0, badge: needs, interactions, quietCounted: true };
+    // the hub leaves the ones that only wait in the background in state.working for older apps (protocol.md "Counts")
+    const waiting = Math.min(counts.background_waiting ?? 0, counts.state.working ?? 0);
+    return { needs, working: (counts.state.working ?? 0) - waiting, waiting, unread: counts.state.unread ?? 0, badge: needs, interactions, quietCounted: true };
   }, [all, interactions, counts, bounded]);
 }
 
