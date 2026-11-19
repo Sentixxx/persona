@@ -15,7 +15,7 @@
   "failed": "无法保存或读取规则：{error}",
   "retry": "重试",
   "inspect": "包括隐藏的会话",
-  "inspect_hint": "仅临时查看，不改变规则或助手可见性。",
+  "temporary_view": "仅临时查看，不改变规则或助手可见性。",
   "close": "关闭",
   "more": "加载更多",
   "hidden": "已隐藏",

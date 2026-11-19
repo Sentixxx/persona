@@ -15,7 +15,7 @@
   "failed": "Could not save or load rules: {error}",
   "retry": "Retry",
   "inspect": "Include hidden sessions",
-  "inspect_hint": "Temporary view only. Assistant visibility and rules stay unchanged.",
+  "temporary_view": "Temporary view only. Assistant visibility and rules stay unchanged.",
   "close": "Close",
   "more": "Load more",
   "hidden": "Hidden",

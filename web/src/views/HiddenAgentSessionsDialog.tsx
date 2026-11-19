@@ -25,7 +25,7 @@ function InspectionList({ close }: { close: () => void }) {
     const off = onHubEvent("sessions_list", () => list.invalidate());
     return () => { off(); list.reset(); };
   }, [list]);
-  return <Group footer={t("hidden-agent-dirs.inspect_hint")}>
+  return <Group footer={t("hidden-agent-dirs.temporary_view")}>
     {state.error && <RowFailed text={state.error} retry={t("hidden-agent-dirs.retry")} onRetry={() => void list.retry()} />}
     {state.loading && <Row label={<Loading />} />}
     {rows.filter((s) => !s.assistant).map((s) => <Row key={runtimeIdentity(s)} label={<a href={href({ name: "session", mid: s.machine_id, sid: s.session_id })} onClick={(e) => { onLinkClick(e, { name: "session", mid: s.machine_id, sid: s.session_id }); close(); }}>{s.title || t("lib-format.untitled_session")}</a>} hint={t(s.hidden_by_directory ? "hidden-agent-dirs.hidden" : "hidden-agent-dirs.normal")} />)}
