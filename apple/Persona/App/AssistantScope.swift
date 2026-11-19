@@ -146,9 +146,9 @@ extension AppModel {
     /// The pending cards the pages list: the current assistant's agents' (a card is its own manager's, else its
     /// session's), and every other group's.
     var scopedInteractions: [Interaction] {
-        let visible = directoryVisibleInteractions
-        guard let scope = assistantScope else { return visible }
         let session = cardSessionResolver()
+        let visible = directoryVisibleInteractions(reading: session)
+        guard let scope = assistantScope else { return visible }
         return visible.filter { scope.has($0.manager ?? session($0.sessionKey)?.manager, group: $0.group) }
     }
 
