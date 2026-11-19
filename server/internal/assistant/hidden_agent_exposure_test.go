@@ -210,3 +210,28 @@ func TestHiddenDirectoryKeepsUnknownSupervisionVisible(t *testing.T) {
 		t.Fatal("unreadable inventory must not hide potentially supervised work")
 	}
 }
+
+// get counts only what each rule hides now: an assistant conversation and an active supervised task under the folder
+// are not hidden (hiddenByDirectory), and each rule keeps its own count.
+func TestHiddenDirectorySettingCountsOnlyHiddenSessions(t *testing.T) {
+	e := newSupervisedEnv(t, false)
+	e.task("conv1", "conv1")
+	sup := supAgentSession()
+	sup.MachineID, sup.Status = "mac", proto.StatusIdle
+	e.sessions("mac", sup,
+		proto.Session{SessionID: "plain", MachineID: "mac", Cwd: "/code/app/x", Status: proto.StatusIdle},
+		proto.Session{SessionID: "plain2", MachineID: "mac", Cwd: "/code/other", Status: proto.StatusIdle},
+		proto.Session{SessionID: "talk", MachineID: "mac", Cwd: "/code/app", Assistant: true, Status: proto.StatusIdle})
+	f := useAgentDirs(e.s)
+	f.set(t, "mac", proto.HiddenAgentDir{Pattern: "/code/app", Enabled: true}, proto.HiddenAgentDir{Pattern: "/code", Enabled: true})
+	got := settingsTool(e.s, `{"action":"get","key":"agents.hidden_dirs"}`)
+	if got.IsError {
+		t.Fatalf("get: %+v", got)
+	}
+	text := got.Content[0].Text
+	for _, want := range []string{"/code/app (on; matches 1 sessions)", "/code (on; matches 2 sessions)"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("want %q in:\n%s", want, text)
+		}
+	}
+}

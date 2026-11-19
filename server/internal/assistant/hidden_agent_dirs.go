@@ -43,9 +43,12 @@ func (s *Service) hiddenByDirectory(machine string, sess proto.Session) bool {
 	if sess.Assistant || s.agentDirs == nil {
 		return false
 	}
+	// A failed read (retried by the devices after a few seconds) hides nothing: the rules are off by default, and
+	// hiding is a view, so a database hiccup must not take every session of the computer out of the lists. Once read,
+	// the rules stay cached (only this manager writes them), so this is only before the first successful read.
 	rules, home, err := s.agentDirs.HiddenAgentDirs(context.Background(), machine)
 	patterns := proto.HiddenAgentDirPatterns(rules)
-	if len(patterns) == 0 && err == nil {
+	if err != nil || len(patterns) == 0 {
 		return false
 	}
 	m, _ := s.fleetMachine(machine)
@@ -55,8 +58,7 @@ func (s *Service) hiddenByDirectory(machine string, sess proto.Session) bool {
 	if home == "" {
 		home = m.Home
 	}
-	// Do not expose ambient context after a failed rules read.
-	matched := err != nil || proto.DirPatternMatchedOn(sess.Cwd, home, m.HomeReal, patterns) != ""
+	matched := proto.DirPatternMatchedOn(sess.Cwd, home, m.HomeReal, patterns) != ""
 	return matched && !s.directorySessionSupervised(machine, sess.SessionID)
 }
 
@@ -129,7 +131,8 @@ func (s *Service) getHiddenAgentDirs(ctx context.Context) (string, error) {
 			}
 			n := 0
 			for _, sess := range sessions {
-				if proto.DirPatternMatchedOn(sess.Cwd, home, m.HomeReal, []string{r.Pattern}) != "" {
+				// What the rule hides now: assistant conversations and active supervised tasks are exempt.
+				if proto.DirPatternMatchedOn(sess.Cwd, home, m.HomeReal, []string{r.Pattern}) != "" && s.hiddenByDirectory(m.ID, sess) {
 					n++
 				}
 			}

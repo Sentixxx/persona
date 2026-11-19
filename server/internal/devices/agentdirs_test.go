@@ -79,6 +79,8 @@ func TestHiddenAgentDirsRefuseBadLists(t *testing.T) {
 		`{"rules":[{"pattern":"relative/dir","enabled":true}]}`,
 		`{"rules":[{"pattern":"~/[","enabled":true}]}`,
 		`{"rules":[{"pattern":"~/","enabled":true}]}`,
+		`{"rules":[{"pattern":"*","enabled":true}]}`,
+		`{"rules":[{"pattern":"/*/","enabled":false}]}`,
 		`{"rules":[{"pattern":"/work","enabled":true},{"pattern":"/work/","enabled":false}]}`,
 		string(tooMany),
 		`nope`,

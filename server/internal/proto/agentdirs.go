@@ -22,10 +22,11 @@ func ValidDirPattern(p string) bool {
 }
 
 // CleanDirPattern trims spaces and trailing slashes; false when nothing is left or the pattern would cover
-// everything (home, the root, or above home, however it is spelled).
+// everything (home, the root, or above home, however it is spelled, or a glob every folder matches: "*", "**", or
+// "/*", which matches the top folder of every path).
 func CleanDirPattern(p string) (string, bool) {
 	p = strings.TrimSpace(p)
-	if blocksEverything(p) {
+	if blocksEverything(p) || strings.Trim(strings.TrimPrefix(filepath.Clean(p), "/"), "*") == "" {
 		return "", false
 	}
 	return strings.TrimRight(p, "/"), true

@@ -7,12 +7,12 @@ import (
 
 // Hidden folders use the blocked folders' syntax: the same cleaning, validity and matcher.
 func TestAgentDirPatterns(t *testing.T) {
-	for in, want := range map[string]string{" ~/work/ ": "~/work", "/opt/b//": "/opt/b", "*botfarm*": "*botfarm*"} {
+	for in, want := range map[string]string{" ~/work/ ": "~/work", "/opt/b//": "/opt/b", "*botfarm*": "*botfarm*", "~/*": "~/*", "/opt/*": "/opt/*"} {
 		if got, ok := CleanDirPattern(in); !ok || got != want {
 			t.Errorf("clean %q = %q %v", in, got, ok)
 		}
 	}
-	for _, everything := range []string{"", "~", "~/", "/", "//", "~/.."} {
+	for _, everything := range []string{"", "~", "~/", "/", "//", "~/..", "*", "**", "*/", "/*", "/**", "//*/"} {
 		if _, ok := CleanDirPattern(everything); ok {
 			t.Errorf("%q covers everything", everything)
 		}

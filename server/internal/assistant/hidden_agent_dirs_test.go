@@ -105,12 +105,22 @@ func TestHiddenDirectoryRules(t *testing.T) {
 	if ft.s.hiddenByDirectory("mac", proto.Session{Cwd: "/work/a"}) {
 		t.Fatal("a rule switched off still hides")
 	}
-	// A failed read keeps ambient context out rather than exposing what may be hidden.
+	// A failed read (the devices retry it after hiddenAgentDirsRetry) hides nothing: the rules are off by default, so
+	// a database hiccup must not take every session of the computer out of the lists.
+	f.set(t, "mac", proto.HiddenAgentDir{Pattern: "/work/*", Enabled: true})
 	f.mu.Lock()
 	f.err = errors.New("database away")
 	f.mu.Unlock()
-	if !ft.s.hiddenByDirectory("mac", proto.Session{SessionID: "s", Cwd: "/code/app"}) {
-		t.Fatal("a failed rules read exposed ambient sessions")
+	for _, cwd := range []string{"/code/app", "/work/a"} {
+		if ft.s.hiddenByDirectory("mac", proto.Session{SessionID: "s", Cwd: cwd}) {
+			t.Fatalf("a failed rules read hid %s", cwd)
+		}
+	}
+	f.mu.Lock()
+	f.err = nil
+	f.mu.Unlock()
+	if !ft.s.hiddenByDirectory("mac", proto.Session{SessionID: "s", Cwd: "/work/a"}) || ft.s.hiddenByDirectory("mac", proto.Session{SessionID: "s", Cwd: "/code/app"}) {
+		t.Fatal("rules not applied again after the read recovered")
 	}
 }
 
@@ -194,6 +204,8 @@ func TestHiddenDirectorySettingActions(t *testing.T) {
 		`{"action":"remove","key":"agents.hidden_dirs","id":"mac:/work"}`,
 		`{"action":"add","key":"agents.hidden_dirs","value":{"machine":"nope","pattern":"/work"}}`,
 		`{"action":"add","key":"agents.hidden_dirs","value":{"machine":"mac","pattern":"relative"}}`,
+		`{"action":"add","key":"agents.hidden_dirs","value":{"machine":"mac","pattern":"*"}}`,
+		`{"action":"add","key":"agents.hidden_dirs","value":{"machine":"mac","pattern":"/**"}}`,
 		`{"action":"set","key":"agents.hidden_dirs","value":{}}`,
 	} {
 		if got := settingsTool(ft.s, bad); !got.IsError {
