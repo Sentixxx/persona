@@ -39,9 +39,15 @@ export function HiddenAgentDirs() {
   const [input, setInput] = useState("");
   const [reload, setReload] = useState(0);
   const endpoint = `/machines/${enc(machine)}/agent-dirs/hidden`;
+  // Each load (another computer, Retry) starts a new view: a save still out from the last one no longer belongs to it,
+  // so its answer or rollback is dropped and it does not keep this view locked.
+  const view = useRef(0);
   useEffect(() => {
     if (!machine) return;
     let dead = false;
+    view.current++;
+    saving.current = false;
+    setBusy(false);
     setState(null);
     setError("");
     api<HiddenAgentDirsState>(endpoint).then((v) => { if (!dead) setState({ rules: v.rules ?? [], home: v.home }); }).catch((e) => { if (!dead) setError(errorText(e)); });
@@ -51,19 +57,23 @@ export function HiddenAgentDirs() {
   const save = async (rules: HiddenAgentDirRule[]) => {
     if (!state || saving.current) return false;
     const previous = state;
+    const started = view.current;
+    const current = () => started === view.current;
     saving.current = true;
     setBusy(true);
     setError("");
     setState({ ...state, rules });
     try {
       const v = await api<HiddenAgentDirsState>(endpoint, { method: "PUT", json: { rules } });
+      if (!current()) return false;
       setState({ rules: v.rules ?? [], home: v.home });
       return true;
     } catch (e) {
+      if (!current()) return false;
       setState(previous);
       setError(errorText(e));
       return false;
-    } finally { saving.current = false; setBusy(false); }
+    } finally { if (current()) { saving.current = false; setBusy(false); } }
   };
   const typed = state ? hiddenPatternError(input, state.rules) : "";
   const add = async () => {
