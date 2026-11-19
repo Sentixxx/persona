@@ -29,10 +29,10 @@ func (s Session) IsSubtask() bool {
 }
 
 // SessionHierarchy is a Session's place among the sessions that started one another (docs/protocol/protocol.md
-// "Session hierarchy"), when it began, its completed task ownership, and rare lifecycle metadata. Each member is
-// a top-level wire key. A Session holds it by pointer (Session.Hierarchy, nil when every member is empty): these
-// sparse fields inline would take every row past its size class (TestSessionFitsItsSizeClass). The Deleted flag
-// describes no ancestry; it shares this storage to preserve the allocation budget for ordinary session rows.
+// "Session hierarchy"), when it began, its completed task ownership, recent command outcomes, and rare lifecycle
+// metadata. Each member is a top-level wire key. A Session holds it by pointer (Session.Hierarchy, nil when every
+// member is empty): these sparse fields inline would take every row past its size class (TestSessionFitsItsSizeClass).
+// The Deleted flag describes no ancestry; it shares this storage to preserve the allocation budget for ordinary rows.
 type SessionHierarchy struct {
 	// HiddenByDirectory is manager-owned visibility, not collection or archive state.
 	HiddenByDirectory bool `json:"hidden_by_directory,omitempty"`
@@ -80,7 +80,30 @@ type SessionHierarchy struct {
 	// IDs", #8131). The manager shows no archive record under one of them: the conversation was listed under it once,
 	// and its archived row repeated the row listed now. Set by the node.
 	Aliases []string `json:"aliases,omitempty"`
-	Deleted bool     `json:"deleted,omitempty"` // Permanent manager tombstone; use Session.IsDeleted/SetDeleted.
+	// BackgroundEnded retains recent shell / Monitor outcomes separately from Session.Background, so older clients keep
+	// counting only running work. Oldest first, at most eight; the node lists entries from the last day. Sparse storage
+	// keeps ordinary Session rows in their allocation size class.
+	BackgroundEnded []BackgroundTask `json:"background_ended,omitempty"`
+	Deleted         bool             `json:"deleted,omitempty"` // Permanent manager tombstone; use Session.IsDeleted/SetDeleted.
+}
+
+// BackgroundEnded returns recent shell / Monitor outcomes, oldest first; nil when none are retained.
+// Shared with the row's other copies: not to be changed.
+func (s *Session) BackgroundEnded() []BackgroundTask {
+	if s.Hierarchy == nil {
+		return nil
+	}
+	return s.Hierarchy.BackgroundEnded
+}
+
+// SetBackgroundEnded replaces the retained command outcomes without changing other copies of the row.
+func (s *Session) SetBackgroundEnded(tasks []BackgroundTask) {
+	if len(tasks) == 0 && len(s.BackgroundEnded()) == 0 {
+		return
+	}
+	h := s.hierarchy()
+	h.BackgroundEnded = slices.Clone(tasks)
+	s.setHierarchy(h)
 }
 
 // EngineLeg is one earlier stretch of a conversation (SessionHierarchy.EngineHistory): the session that ran it, its
@@ -126,7 +149,8 @@ type SessionChildren struct {
 func (h *SessionHierarchy) empty() bool {
 	return !h.HiddenByDirectory && h.ParentAgentID == "" && h.StartedAt.IsZero() && h.AskingParentSessionID == "" && h.FoldedUnder == "" && h.FoldedAs == "" &&
 		h.FoldedSide == "" &&
-		h.Children == nil && len(h.EngineHistory) == 0 && h.CompletedTodo == nil && len(h.Aliases) == 0 && !h.Deleted
+		h.Children == nil && len(h.EngineHistory) == 0 && h.CompletedTodo == nil && len(h.Aliases) == 0 &&
+		len(h.BackgroundEnded) == 0 && !h.Deleted
 }
 
 // HiddenByDirectory reports the manager's directory visibility without growing every session row.
@@ -174,6 +198,7 @@ func (s *Session) hierarchy() SessionHierarchy {
 	}
 	h.EngineHistory = slices.Clone(h.EngineHistory)
 	h.Aliases = slices.Clone(h.Aliases)
+	h.BackgroundEnded = slices.Clone(h.BackgroundEnded)
 	return h
 }
 

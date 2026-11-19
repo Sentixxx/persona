@@ -38,8 +38,8 @@ func TestBlockedAgentDirMatchesSymlinkedHome(t *testing.T) {
 		work: true, // the link followed
 		filepath.Join(link, ".bots", "runs", "workspaces", "w1"): true, // through the link
 		"~/.bots/runs/workspaces/w2":                             true,
-		filepath.Join(real, "code", "app"):                            false,
-		"":                                                            false,
+		filepath.Join(real, "code", "app"):                       false,
+		"":                                                       false,
 	} {
 		if got := n.agentDirBlocked(dir); got != want {
 			t.Errorf("%q blocked=%v", dir, got)

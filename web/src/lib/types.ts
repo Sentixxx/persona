@@ -352,7 +352,8 @@ export interface Session {
   /** Its latest turn ended in a model API error (the hub sets it while it is stopped, #1516): its task is interrupted. */
   turn_error?: string;
   /** What the agent's record says of turn_error: "transient" (worth a "Continue"), "user" (the user must act),
-   *  or "usage_limit" (a subscription limit, until it resets). */
+   *  or "usage_limit" (a subscription limit, until it resets). Or the hub's own word on a task Agent's turn with no
+   *  output (#10187): "no_output" or "stopped" (Persona's Stop interrupted it), turn_error then being its sentence. */
   turn_error_kind?: string;
   /** What is wrong, when the hub can tell from turn_error (docs/assistant/onboarding.md 5.2): not_logged_in / auth_failed /
    *  model_route / rate_limited / model_fallback_unavailable (the model Claude Code fell back to after a refusal can't
@@ -384,6 +385,8 @@ export interface Session {
   /** Its own task list (Claude Code's TodoWrite / TaskCreate): how far along it is (docs/integrations/agent-goal.md "Plan"). */
   plan?: PlanInfo;
   background?: BackgroundTask[];
+  /** Recent shell / Monitor outcomes from the last day; absent on older hubs and omitted from list summaries. */
+  background_ended?: BackgroundTask[];
   /** Bounded list summaries omit task arrays; these scalars are authoritative when present. */
   waiting?: boolean;
   background_count?: number;
@@ -533,6 +536,10 @@ export interface BackgroundTask {
   command?: string;
   output_file?: string;
   started_at?: string;
+  /** A retained outcome: completed / failed / killed / stopped; absent on older hubs and while running. */
+  status?: string;
+  ended_at?: string;
+  exit_code?: number;
   /** A Monitor: when it stops by itself. */
   expires_at?: string;
   /** A workflow: its run in Session.workflows. */
@@ -846,6 +853,8 @@ export interface Interaction {
   tool_name?: string;
   questions?: Question[];
   plan?: string;
+  /** The permission mode a plan-mode session goes on in once this plan is approved (#3784). */
+  plan_then?: string;
   tool_input?: Record<string, unknown>;
   /** The outgoing text the server lets the user edit before Allow, only for a Claude Code Lark send/reply card. */
   editable_text?: string;
@@ -991,7 +1000,7 @@ export interface MachineMetrics {
   machine_id: string;
   online: boolean;
   system?: Machine["system"];
-  latest?: { t: number; cpu?: number; load?: number; mem_used?: number; mem_total?: number; net_rx?: number; net_tx?: number; disk_used?: number; disk_total?: number };
+  latest?: { t: number; cpu?: number; load?: number; mem_used?: number; mem_total?: number; net_rx?: number; net_tx?: number; disk_used?: number; disk_total?: number; battery_percent?: number; battery_charging?: boolean; temp_c?: number };
   points: MetricPoint[];
   /** Its tokens (docs/server/machines.md "Token usage"): absent from an older hub, or when its node never reported usage. */
   usage?: UsageCard;

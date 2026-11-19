@@ -93,12 +93,12 @@ func TestHiddenDirectoryRules(t *testing.T) {
 		}
 	}
 	for cwd, want := range map[string]bool{
-		"/home/u/.automation/job/1":              true, // ~ is that computer's home
-		"/home/u/.automation-copy":               false,
+		"/home/u/.automation/job/1":            true, // ~ is that computer's home
+		"/home/u/.automation-copy":             false,
 		"/home/u/.bots/botfarm/workspaces/x/y": true, // a folder name glob anywhere in the path
-		"/work":                                  false,
-		"/code/app":                              false,
-		"":                                       false,
+		"/work":                                false,
+		"/code/app":                            false,
+		"":                                     false,
 	} {
 		if got := ft.s.hiddenByDirectory("mac", proto.Session{SessionID: "s", Cwd: cwd}); got != want {
 			t.Errorf("%q: %v", cwd, got)
