@@ -19154,7 +19154,10 @@ def paged_sessions(query):
         rows = [s for s in rows if s.get("manager") == named]
     if os.environ.get("MOCK_SESSIONS_LIST") != "1" or not (set(query) - {"manager", "include_hidden"}):
         return {"sessions": rows}, 200
-    if query.get("include_hidden", [""])[0] != "1":
+    # The exact lookup (one session_id with its machine_id) answers a directory-hidden row too, as the hub's
+    # (sessionlist Options.ID); every other read leaves hidden rows out unless include_hidden=1.
+    exact = len(query.get("session_id", [])) == 1 and bool(query.get("machine_id", [""])[0])
+    if not exact and query.get("include_hidden", [""])[0] != "1":
         rows = [s for s in rows if not s.get("hidden_by_directory")]
     revision = list_revision(rows)
     fields = {"machine_id": "machine_id", "session_id": "session_id",
