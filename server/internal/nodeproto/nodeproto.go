@@ -161,6 +161,21 @@ const (
 	// AgentDirsBlocked: node.configure's agent_dirs_blocked, the Agent folder rules that block (#10053): the node keeps
 	// sessions working there out of every list and sends nothing of them. Without it the manager only hides them.
 	AgentDirsBlocked = "agent_dirs_blocked"
+	// NodeLanes: the node answers rpc.lanes and frames its connection when the manager asks, its messages on the lanes of
+	// ControlLane and BulkLane (docs/protocol/protocol.md "Lanes"). Without it the manager never asks, and the connection
+	// stays JSON lines.
+	NodeLanes = "node_lanes_v1"
+)
+
+// ControlLane and BulkLane say which messages of a framed node connection go on those lanes (rpc.Peer.EnableLanes,
+// docs/protocol/protocol.md "Lanes"): a method names a request and its answer, an event itself. Every other request and
+// answer goes on the interactive lane, every other event on the events lane, rpc.cancel on control. Both ends use these
+// lists; a name one end does not know only changes the order its own side writes in.
+var (
+	// ControlLane: the heartbeat, and the port streams' credit, which bulk waits for.
+	ControlLane = []string{"ping", "stream.ack"}
+	// BulkLane: what carries a file's or a package's bytes, and a forwarded port's.
+	BulkLane = []string{"file.chunk", "file.read", "file.upload.chunk", "node.update.chunk", "stream.data"}
 )
 
 // Error codes in the manager's answers to a resident node's replayed notifications (a notify with spool_id,
@@ -190,7 +205,7 @@ const (
 const RestartExitCode = 75
 
 // Announced is what a node built from this code announces.
-var Announced = []string{OwnerControls, SessionSkills, ShareProjection, CreationReceipt, PersonaContracts, ManagerUpdateInventory, MCPWait, Sessions, ModelConfiguration, AssistantConfigDir, AssistantSupervisionInstructions, AssistantServiceTier, NodeUpdate, Engines, MachineUID, HerdrServer, PluginNodeCall, Ultracode, HealthSpaces, Preview, SecretRun, Clipboard, SecretEnv, LauncherSwitch, ModelHTTP, EngineSwitch, ModelRun, LauncherSwitchNow, LauncherSwitchIdle, PaneCwd, NodeUpdateIdle, PaneNewSpace, MachineDiagnose, StartGoal, StartContinue, LauncherCheckAssistantTurn, StartAnswer, AssistantToolSearchFallback, AgentDirsBlocked}
+var Announced = []string{OwnerControls, SessionSkills, ShareProjection, CreationReceipt, PersonaContracts, ManagerUpdateInventory, MCPWait, Sessions, ModelConfiguration, AssistantConfigDir, AssistantSupervisionInstructions, AssistantServiceTier, NodeUpdate, Engines, MachineUID, HerdrServer, PluginNodeCall, Ultracode, HealthSpaces, Preview, SecretRun, Clipboard, SecretEnv, LauncherSwitch, ModelHTTP, EngineSwitch, ModelRun, LauncherSwitchNow, LauncherSwitchIdle, PaneCwd, NodeUpdateIdle, PaneNewSpace, MachineDiagnose, StartGoal, StartContinue, LauncherCheckAssistantTurn, StartAnswer, AssistantToolSearchFallback, AgentDirsBlocked, NodeLanes}
 
 // ShareProjection is the bounded complete-source sharing projection, not light Items.
 const ShareProjection = "share_projection.v1"
