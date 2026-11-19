@@ -33,9 +33,9 @@ func TestHiddenDirectoryAmbientExposure(t *testing.T) {
 					t.Fatalf("agents_list state=%s leaked hidden session: %s", state, got)
 				}
 			}
-			needs, unread, awaiting, waiting, done, muted, working, workflows := ft.s.snapshotAgents(context.Background(), []Device{{ID: "mac"}}, "")
-			if len(needs)+len(unread)+len(awaiting)+len(waiting)+len(done)+len(muted)+len(workflows) != 0 || len(working) != 1 || working[0].Label != "Visible work" {
-				t.Fatalf("snapshot includes hidden sessions: needs=%v unread=%v awaiting=%v waiting=%v done=%v muted=%v working=%v workflows=%v", needs, unread, awaiting, waiting, done, muted, working, workflows)
+			needs, unread, awaiting, waiting, done, muted, working := ft.s.snapshotAgents(context.Background(), []Device{{ID: "mac"}}, "")
+			if len(needs)+len(unread)+len(awaiting)+len(waiting)+len(done)+len(muted) != 0 || len(working) != 1 || working[0].Label != "Visible work" {
+				t.Fatalf("snapshot includes hidden sessions: needs=%v unread=%v awaiting=%v waiting=%v done=%v muted=%v working=%v", needs, unread, awaiting, waiting, done, muted, working)
 			}
 			fleet := ft.s.fleetSnapshot()
 			if fleet.NeedsYou != 0 || fleet.Unread != 0 || fleet.Working != 1 {

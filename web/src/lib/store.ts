@@ -1,3 +1,4 @@
+import { refreshAgentsDisplay, resetAgentsDisplay } from "./agents-display";
 import { forgetSentHistory } from "./send-history";
 import { availableConversation, clearConversationDeletions, conversationDeleted, conversationKeyDeleted, deletedConversation, hasDeletedConversations, rememberConversationDeleted } from "./conversation-deleted";
 import { compatibleEnvelope, setCompatibilityFeatures } from "./compatibility";
@@ -668,6 +669,8 @@ type SessionListener = {
   /** The hub's `revs` event: the transcript grew to this rev; the list's row keeps the rev it had (lib/stale-page.ts). */
   rev?: (rev: number) => void;
   reconnected?: () => void;
+  /** Contiguous cursor of a transcript that has already opened its socket watch. */
+  watchCursor?: () => number | undefined;
 };
 const sessionListeners = new Map<string, Set<SessionListener>>();
 const key = (mid: string, sid: string) => `${mid}/${sid}`;
@@ -971,6 +974,7 @@ function onMessage(msg: Record<string, unknown>) {
       // notifications off never got a live update after loading. Also: a hub that came back may serve a new web build
       // (lib/new-version.ts).
       helloHooks.forEach((f) => f());
+      void refreshAgentsDisplay();
       back();
       const summaryMode = state.features.includes(SESSIONS_LOOKUP_FEATURE);
       const rootsMode = state.features.includes(SESSIONS_HIERARCHY_FEATURE);
@@ -1035,6 +1039,7 @@ function onMessage(msg: Record<string, unknown>) {
       }
       break;
     case "sessions": {
+      void refreshAgentsDisplay();
       const mid = msg.machine_id as string;
       sessionsChanged(mid);
       // A delta hub's list has no Codex history (the page has that from GET /sessions): keep what it already has.
@@ -1507,6 +1512,7 @@ function sessionsChanged(mid: string) {
 }
 
 export async function refresh() {
+  void refreshAgentsDisplay();
   const gen = ++refreshes.asked;
   const machinesAt = machinesRev;
   const sessionsAt = sessionsRev;
@@ -1810,6 +1816,7 @@ function resendSeen() {
 }
 
 export function reset() {
+  resetAgentsDisplay();
   disconnect();
   clearConversationDeletions();
   resetMessageFeedback();
@@ -1871,4 +1878,11 @@ export function reset() {
   forgetCardRows(false);
 }
 
-configureMessageFeedback({ getSession, send, onHubEvent, subscribe, receiptsAllowed: () => appSocketReady() && receiptOwner === credentialOwner() });
+configureMessageFeedback({ getSession, send, onHubEvent, subscribe,
+  watchCursor: (mid, sid) => {
+    if (appSocketReady()) for (const listener of sessionListeners.get(key(mid, sid)) ?? []) {
+      const cursor = listener.watchCursor?.();
+      if (cursor !== undefined) return cursor;
+    }
+  },
+  receiptsAllowed: () => appSocketReady() && receiptOwner === credentialOwner() });
