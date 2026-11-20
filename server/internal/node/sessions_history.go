@@ -132,11 +132,14 @@ func runtimeHistory(ctx context.Context, h *runtimeConn, q sessionhistory.Query,
 			sessions = append(sessions, r.Session)
 		}
 		for _, s := range normalizeRuntimeSessions(h, sessions) {
+			r := rows[s.SessionID]
+			key := sessionhistory.KeyOf(r.At(), r.NodeKey())
+			if page.Reached == nil || page.Reached.Before(key) {
+				page.Reached = &key // read, left out or not: the page goes on past it (Merge)
+			}
 			if blocked(s.SessionID, s.Cwd) {
 				continue
 			}
-			r := rows[s.SessionID]
-			key := sessionhistory.KeyOf(r.At(), r.NodeKey())
 			s.Archived = r.Session.Archived
 			r.Session = s
 			page.Items = append(page.Items, sessionhistory.Item[sessionhistory.Row]{Key: key, V: r})

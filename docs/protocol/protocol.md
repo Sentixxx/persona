@@ -4632,7 +4632,7 @@ Lists keep only the recent: the node lists Claude transcripts of the last 7 days
 
 - **Window**: `since` (required) and `until` (default now), RFC 3339. A session is in it when its time is in `[since, until)`; its time is `active_at` (when it was last active, e.g. its last message: archiving may move `updated_at`), else `updated_at`, else `started_at`.
 - **Rows**: listed sessions (the `Session` shape), with `archived: true` for archived ones, plus `history_source` (`claude`, `codex` or `runtime`), `history_runtime` (a runtime row's runtime id) and, when the source knows them, `active_at`, `started_at`, `origin` (`user` or `automation`, a scheduled run) and `user_messages` (how many messages the user wrote). Deleted sessions (`status: "deleted"` or `deleted: true`, or deleted in Persona) are never listed.
-- **Pages**: newest first by that time (milliseconds), ties by source and session id; `limit` 200 by default, at most 500; `next_cursor` is opaque, empty on the last page. Send the same `since` / `until` with every cursor.
+- **Pages**: newest first by that time (milliseconds), ties by source and session id; `limit` 200 by default, at most 500; `next_cursor` is opaque, empty on the last page; a page can be empty with a `next_cursor` when every row read for it was left out (a blocked folder's), so page until `next_cursor` is empty. Send the same `since` / `until` with every cursor.
 - **`complete`**: the source vouches that the window is fully listed. A node-owned source lists every record still on disk.
 
 Legs:
