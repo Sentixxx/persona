@@ -190,6 +190,7 @@ func (n *Node) claudeHistory(q sessionhistory.Query) []sessionhistory.Item[sessi
 		}
 		newest[id] = cand{p, st}
 	}
+	keep := n.keptSessions()
 	var out []sessionhistory.Item[sessionhistory.Row]
 	for id, c := range newest {
 		m := n.meta(c.path, c.st)
@@ -197,7 +198,7 @@ func (n *Node) claudeHistory(q sessionhistory.Query) []sessionhistory.Item[sessi
 		if !q.In(updated) || isLauncherCheckRun(c.path, m) {
 			continue
 		}
-		if !n.sessionScopeAllows(m.cwd) || m.cwd != "" && n.cwdBlocked(m.cwd) {
+		if !n.sessionScopeAllows(m.cwd) || n.restBlocked(id, m.cwd, keep) {
 			continue
 		}
 		if m.lastText == "" && m.lastTextAt.IsZero() && m.title == "" && !forked[id] && c.st.Size() <= quickTail {
@@ -258,7 +259,7 @@ func (n *Node) codexHistory(q sessionhistory.Query) []sessionhistory.Item[sessio
 		}
 		m := n.meta(c.path, c.st)
 		updated := lastUsed(m, c.st)
-		if !q.In(updated) || !n.sessionScopeAllows(m.cwd) || m.cwd != "" && n.cwdBlocked(m.cwd) {
+		if !q.In(updated) || !n.sessionScopeAllows(m.cwd) || n.restBlocked(id, m.cwd, keep) {
 			continue
 		}
 		s := proto.Session{

@@ -192,7 +192,7 @@ func (n *Node) scanOffline() []proto.Session {
 		}
 		// A blocked Agent folder never takes the assistant's own conversations or the sessions the hub keeps out, at
 		// rest as in the live list (sessions.go); a blocked Claude config folder still does here.
-		if cwd != "" && n.cwdBlocked(cwd) && (n.claudeDirBlocks(cwd) || !keep[id] && !n.isAssistantSession(id)) {
+		if n.restBlocked(id, cwd, keep) {
 			continue
 		}
 		// Sessions that never produced output (hook probes): small files read whole with no title and no words. A bigger

@@ -73,6 +73,13 @@ func (n *Node) sessionBlocked(sid, cwd string) bool {
 	return sid == "" || (!n.isAssistantSession(sid) && !n.keptSessions()[sid])
 }
 
+// restBlocked: a session at rest (a transcript or rollout on disk, listed or in history) working in cwd is left out.
+// A blocked Agent folder spares the assistant's conversations and the sessions the hub keeps (keep); a blocked Claude
+// config folder does not.
+func (n *Node) restBlocked(id, cwd string, keep map[string]bool) bool {
+	return cwd != "" && n.cwdBlocked(cwd) && (n.claudeDirBlocks(cwd) || !keep[id] && !n.isAssistantSession(id))
+}
+
 // runtimeSessionBlocked is sessionBlocked for a session a runtime package runs: cwd as the runtime gave it, else its row's.
 func (n *Node) runtimeSessionBlocked(sid, cwd string) bool {
 	if cwd == "" && n.runtimes != nil {

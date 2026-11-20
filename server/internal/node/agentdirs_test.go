@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -179,8 +180,15 @@ func TestBlockedAgentDirKeepsAssistantAndKeptSessionsAtRest(t *testing.T) {
 	}
 	const mine, kept, other = "eeeeeeee-0000-0000-0000-000000000001", "eeeeeeee-0000-0000-0000-000000000002", "eeeeeeee-0000-0000-0000-000000000003"
 	writeDrift(t, home, mine, assistant, assistant)
-	writeDrift(t, home, kept, work, work)
-	writeDrift(t, home, other, work, work)
+	for _, id := range []string{kept, other} {
+		// Padded past what history takes for a probe that never said anything (sessions_history.go).
+		f, err := os.OpenFile(writeDrift(t, home, id, work, work), os.O_APPEND|os.O_WRONLY, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = f.WriteString(strings.Repeat(" ", 4096) + "\n")
+		_ = f.Close()
+	}
 	if _, err := request(t, n, "node.configure", map[string]any{"keep_sessions": []string{kept}, "agent_dirs_blocked": []string{assistant, work}}); err != nil {
 		t.Fatal(err)
 	}
@@ -193,5 +201,29 @@ func TestBlockedAgentDirKeepsAssistantAndKeptSessionsAtRest(t *testing.T) {
 	}
 	if !got[mine] || !got[kept] || got[other] {
 		t.Fatalf("listed at rest: assistant %v, kept %v, other %v", got[mine], got[kept], got[other])
+	}
+	// sessions.history lists at rest by the same rule: the kept session, not the other one (the assistant's
+	// conversations are never history rows).
+	history := func() map[string]bool {
+		t.Helper()
+		ans, err := n.sessionsHistory(t.Context(), mustHistoryJSON(t, map[string]any{"since": time.Now().Add(-90 * 24 * time.Hour).UTC().Format(time.RFC3339Nano), "source": "claude"}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		in := map[string]bool{}
+		for _, r := range ans.Rows {
+			in[r.Session.SessionID] = true
+		}
+		return in
+	}
+	if h := history(); !h[kept] || h[other] {
+		t.Fatalf("history: kept %v, other %v", h[kept], h[other])
+	}
+	// A blocked Claude config folder still takes a kept session out of history, as it does of the list at rest.
+	n.cdirs = newClaudeDirs()
+	n.cdirs.scan = func() map[int]procEnv { return nil }
+	n.cdirs.blocked = []string{work}
+	if h := history(); h[kept] {
+		t.Fatal("history: a kept session under a blocked Claude config folder is listed")
 	}
 }
