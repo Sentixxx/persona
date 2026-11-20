@@ -5695,7 +5695,8 @@ followed. Empty is the default.
 again; when it cannot read the rules (before its first successful read), it sends `null`, which leaves the node's list
 as it is rather than unblocking every folder.
 A node that announces `agent_dirs_blocked` keeps them (also across restarts, `~/.persona/agent-dirs-blocked.json`)
-and, for a session working there, with any runtime: leaves it out of every session list, so no row, count or
+and, for a session working there, with any runtime: leaves it out of every session list (`sessions.history`
+included), so no row, count or
 revision reaches the hub; pushes no `hook.event`, `session.items` or `session.delta` of it (a read the hub asks
 for by session id, such as one of a chat opened before the block, is still answered); gives a Claude Code hook
 no decision at once (Claude Code asks in its terminal); dismisses a runtime package's `interaction.create` at once

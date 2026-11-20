@@ -358,3 +358,49 @@ func mustHistoryJSON(t *testing.T, v any) json.RawMessage {
 	}
 	return b
 }
+
+// A runtime's past session the live list leaves out for a blocked Agent folder is in no sessions.history page, as
+// Claude Code's and Codex's are not (#10053); one the hub keeps is listed as in the live list. Dropped before paging:
+// the newest row being blocked still leaves a full page of one.
+func TestSessionsHistoryLeavesARuntimeSessionInABlockedFolderOut(t *testing.T) {
+	n, _ := runtimeNode(t)
+	now := time.Now().UTC()
+	row := func(id, cwd string, ago time.Duration) map[string]any {
+		return map[string]any{"session_id": id, "status": "offline", "cwd": cwd, "updated_at": now.Add(-ago).Format(time.RFC3339Nano)}
+	}
+	rows := []map[string]any{
+		row("blocked", "/work/bot/run1", time.Hour),
+		row("held", "/work/bot/run2", 2*time.Hour),
+		row("open", "/work/app", 3*time.Hour),
+	}
+	hello := dshHello()
+	hello["caps"].(map[string]any)["history"] = true
+	c := dialRuntime(t, n, hello)
+	c.mu.Lock()
+	c.answer = historyRuntime(rows)
+	c.mu.Unlock()
+	waitFor(t, "ready", func() bool { return len(n.runtimes.ready()) == 1 })
+	n.setBlockedAgentDirs([]string{"/work/bot/*"})
+	n.mu.Lock()
+	n.kept = map[string]bool{"held": true}
+	n.mu.Unlock()
+
+	since := now.Add(-24 * time.Hour).Format(time.RFC3339Nano)
+	var ids []string
+	cursor := ""
+	for page := 0; ; page++ {
+		ans := historyCall(t, n, map[string]any{"since": since, "source": "runtime", "limit": 1, "cursor": cursor})
+		if len(ans.Rows) != 1 && ans.NextCursor != "" {
+			t.Fatalf("page %d: %d rows with more to come; want a full page", page, len(ans.Rows))
+		}
+		for _, r := range ans.Rows {
+			ids = append(ids, r.Session.SessionID)
+		}
+		if cursor = ans.NextCursor; cursor == "" || page > 5 {
+			break
+		}
+	}
+	if strings.Join(ids, ",") != "held,open" {
+		t.Fatalf("rows %v; want held (kept by the hub) and open", ids)
+	}
+}

@@ -68,7 +68,7 @@ func (n *Node) sessionsHistory(ctx context.Context, raw json.RawMessage) (sessio
 			if p.Runtime != "" && p.Runtime != id {
 				continue
 			}
-			part, state := runtimeHistory(ctx, h, q, after)
+			part, state := runtimeHistory(ctx, h, q, after, n.listBlocked)
 			parts = append(parts, part)
 			ans.Sources = append(ans.Sources, state)
 		}
@@ -91,8 +91,9 @@ func historyItem(r sessionhistory.Row) sessionhistory.Item[sessionhistory.Row] {
 	return sessionhistory.Item[sessionhistory.Row]{Key: sessionhistory.KeyOf(r.At(), r.NodeKey()), V: r}
 }
 
-// runtimeHistory asks one runtime for the page: not at all when it does not declare caps.history.
-func runtimeHistory(ctx context.Context, h *runtimeConn, q sessionhistory.Query, after *sessionhistory.Key) (sessionhistory.Part[sessionhistory.Row], sessionhistory.SourceState) {
+// runtimeHistory asks one runtime for the page: not at all when it does not declare caps.history. A session the live
+// list leaves out for a blocked folder (blocked) is in no page either; it is dropped before paging, so a page stays full.
+func runtimeHistory(ctx context.Context, h *runtimeConn, q sessionhistory.Query, after *sessionhistory.Key, blocked func(sid, cwd string) bool) (sessionhistory.Part[sessionhistory.Row], sessionhistory.SourceState) {
 	h.mu.Lock()
 	id, supported := h.hello.Runtime, h.hello.Caps.History
 	h.mu.Unlock()
@@ -131,6 +132,9 @@ func runtimeHistory(ctx context.Context, h *runtimeConn, q sessionhistory.Query,
 			sessions = append(sessions, r.Session)
 		}
 		for _, s := range normalizeRuntimeSessions(h, sessions) {
+			if blocked(s.SessionID, s.Cwd) {
+				continue
+			}
 			r := rows[s.SessionID]
 			key := sessionhistory.KeyOf(r.At(), r.NodeKey())
 			s.Archived = r.Session.Archived
